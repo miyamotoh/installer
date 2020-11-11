@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"path/filepath"
 
+	//"github.com/sirupsen/logrus"
+
 	"github.com/gophercloud/gophercloud"
 	"github.com/gophercloud/gophercloud/openstack"
 	"github.com/gophercloud/gophercloud/openstack/identity/v3/tokens"
@@ -53,6 +55,8 @@ func TFVars(masterConfigs []*v1alpha1.OpenstackProviderSpec, cloud string, exter
 			seen[config.AvailabilityZone] = true
 		}
 	}
+
+	// christy: put security flag here?
 
 	cfg := &config{
 		ExternalNetwork:         externalNetwork,

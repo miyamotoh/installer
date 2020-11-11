@@ -414,12 +414,14 @@ func (t *TerraformVariables) Generate(parents asset.Parents) error {
 			installConfig.Config.Platform.OpenStack.IngressFloatingIP,
 			installConfig.Config.Platform.OpenStack.APIVIP,
 			installConfig.Config.Platform.OpenStack.IngressVIP,
+			// christy: set security group here
 			string(*rhcosImage),
 			installConfig.Config.Platform.OpenStack.ClusterOSImageProperties,
 			clusterID.InfraID,
 			caCert,
 			bootstrapIgn,
 			installConfig.Config.ControlPlane.Platform.OpenStack,
+			// i think this is getting the network, which then does not have sgs
 			installConfig.Config.Platform.OpenStack.MachinesSubnet,
 		)
 		if err != nil {

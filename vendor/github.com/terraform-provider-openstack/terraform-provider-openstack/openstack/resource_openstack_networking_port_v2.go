@@ -288,7 +288,7 @@ func resourceNetworkingPortV2Create(d *schema.ResourceData, meta interface{}) er
 	securityGroups := expandToStringSlice(d.Get("security_group_ids").(*schema.Set).List())
 	log.Printf("[DEBUG] openstack_networking_port_v2 security groups: %#v", securityGroups)
 	noSecurityGroups := d.Get("no_security_groups").(bool)
-	log.Printf("[DEBUG] openstack_networking_port_v2 noSecurityGroups bool: %s", noSecurityGroups)
+	log.Printf("[DEBUG] openstack_networking_port_v2 noSecurityGroups bool: %#v", noSecurityGroups)
 
 	// Check and make sure an invalid security group configuration wasn't given.
 	if noSecurityGroups && len(securityGroups) > 0 {
@@ -322,14 +322,14 @@ func resourceNetworkingPortV2Create(d *schema.ResourceData, meta interface{}) er
 		createOpts.SecurityGroups = &securityGroups
 	}
 
-	log.Printf("[DEBUG] openstack_networking_port_v2 nosg sgs: %s", securityGroups)
+	log.Printf("[DEBUG] openstack_networking_port_v2 nosg sgs: %#v", securityGroups)
 
 	// Only set SecurityGroups if one was specified.
 	// Otherwise this would mimic the no_security_groups action.
 	if len(securityGroups) > 0 {
 		createOpts.SecurityGroups = &securityGroups
 	}
-	log.Printf("[DEBUG] openstack_networking_port_v2 nonempty sg: %s", securityGroups)
+	log.Printf("[DEBUG] openstack_networking_port_v2 nonempty sg: %#v", securityGroups)
 
 	// Declare a finalCreateOpts interface to hold either the
 	// base create options or the extended DHCP options.

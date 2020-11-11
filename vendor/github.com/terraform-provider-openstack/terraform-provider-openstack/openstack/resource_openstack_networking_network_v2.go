@@ -234,6 +234,7 @@ func resourceNetworkingNetworkV2Create(d *schema.ResourceData, meta interface{})
 	// Add the port security attribute if specified.
 	if v, ok := d.GetOkExists("port_security_enabled"); ok {
 		portSecurityEnabled := v.(bool)
+		log.Printf("[DEBUG] christy dbg port security enabled/%b", portSecurityEnabled)
 		finalCreateOpts = portsecurity.NetworkCreateOptsExt{
 			CreateOptsBuilder:   finalCreateOpts,
 			PortSecurityEnabled: &portSecurityEnabled,
@@ -266,6 +267,16 @@ func resourceNetworkingNetworkV2Create(d *schema.ResourceData, meta interface{})
 	}
 
 	log.Printf("[DEBUG] openstack_networking_network_v2 create options: %#v", finalCreateOpts)
+	/*psMap, err := finalCreateOpts.ToNetworkCreateMap()
+	if err == nil {
+		netCOpts := psMap["network"]
+		log.Printf("[DEBUG] openstack_networking_nework_v2_create port security again: %b", *"]["port_security_enabled"])
+	} else {
+		log.Printf("[DEBUG] openstack_networking_nework_v2_create port security again ERR %s", err)
+	}*/
+
+	//log.Printf("[DEBUG] openstack_networking_nework_v2_create port security again %b", *newfinalcreateopts.PortSecurityEnabled)
+
 	n, err := networks.Create(networkingClient, finalCreateOpts).Extract()
 	if err != nil {
 		return fmt.Errorf("Error creating openstack_networking_network_v2: %s", err)
@@ -279,7 +290,7 @@ func resourceNetworkingNetworkV2Create(d *schema.ResourceData, meta interface{})
 		Refresh:    resourceNetworkingNetworkV2StateRefreshFunc(networkingClient, n.ID),
 		Timeout:    d.Timeout(schema.TimeoutCreate),
 		Delay:      5 * time.Second,
-		MinTimeout: 3 * time.Second,
+		MinTimeout: 10 * time.Second,
 	}
 
 	_, err = stateConf.WaitForState()
@@ -288,6 +299,30 @@ func resourceNetworkingNetworkV2Create(d *schema.ResourceData, meta interface{})
 	}
 
 	d.SetId(n.ID)
+
+	// christy delete debug bigs
+	var (
+		finalUpdateOpts networks.UpdateOptsBuilder
+		updateOpts      networks.UpdateOpts
+	)
+
+	finalUpdateOpts = updateOpts
+
+	// Add the port security attribute if specified.
+	if v, ok := d.GetOkExists("port_security_enabled"); ok {
+		portSecurityEnabled := v.(bool)
+		log.Printf("[DEBUG] openstack_networking_network_v2 create-update PortSecurityEnabled: %s", portSecurityEnabled)
+		finalUpdateOpts = portsecurity.NetworkUpdateOptsExt{
+			UpdateOptsBuilder:   finalUpdateOpts,
+			PortSecurityEnabled: &portSecurityEnabled,
+		}
+
+	}
+	log.Printf("[DEBUG] openstack_networking_network_v2 %s create/update options: %#v", d.Id(), finalUpdateOpts)
+	_, err = networks.Update(networkingClient, d.Id(), finalUpdateOpts).Extract()
+	if err != nil {
+		return fmt.Errorf("Error updating openstack_networking_network_v2 %s: %s", d.Id(), err)
+	}
 
 	tags := networkingV2AttributesTags(d)
 	if len(tags) > 0 {
@@ -342,6 +377,7 @@ func resourceNetworkingNetworkV2Read(d *schema.ResourceData, meta interface{}) e
 }
 
 func resourceNetworkingNetworkV2Update(d *schema.ResourceData, meta interface{}) error {
+	log.Printf("[DEBUG] openstack_networking_network_v2 resourceNetworkingNetworkV2Update")
 	config := meta.(*Config)
 	networkingClient, err := config.NetworkingV2Client(GetRegion(d, config))
 	if err != nil {
@@ -398,6 +434,7 @@ func resourceNetworkingNetworkV2Update(d *schema.ResourceData, meta interface{})
 	// Populate port security options.
 	if d.HasChange("port_security_enabled") {
 		portSecurityEnabled := d.Get("port_security_enabled").(bool)
+		log.Printf("[DEBUG] openstack_networking_network_v2 change PortSecurityEnabled: %s", portSecurityEnabled)
 		finalUpdateOpts = portsecurity.NetworkUpdateOptsExt{
 			UpdateOptsBuilder:   finalUpdateOpts,
 			PortSecurityEnabled: &portSecurityEnabled,
