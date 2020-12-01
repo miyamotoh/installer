@@ -123,6 +123,16 @@ func validateFlavor(flavorName string, ci *CloudInfo, req flavorRequirements, fl
 	if flavor.Baremetal {
 		return nil
 	}
+	// put a check here for external boot disk for PowerVM?
+	/*
+	   if flavor.ExternalBoot {
+	           return nil
+	   }
+	*/
+	// debug... just return nil
+	if true {
+		return nil
+	}
 
 	errs := []string{}
 	if flavor.RAM < req.RAM {
