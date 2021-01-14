@@ -48,10 +48,6 @@ variable "private_network_id" {
   type = string
 }
 
-variable "master_sg_ids" {
-  type = list(string)
-}
-
 variable "nodes_subnet_id" {
   type = string
 }
