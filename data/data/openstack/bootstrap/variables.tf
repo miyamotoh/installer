@@ -48,6 +48,10 @@ variable "private_network_id" {
   type = string
 }
 
+variable "master_sg_id" {
+  type = string
+}
+
 variable "nodes_subnet_id" {
   type = string
 }

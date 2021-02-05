@@ -3,6 +3,7 @@ resource "openstack_networking_port_v2" "bootstrap_port" {
 
   admin_state_up     = "true"
   network_id         = var.private_network_id
+  security_group_ids = [var.master_sg_id]
   tags               = ["openshiftClusterID=${var.cluster_id}"]
 
   extra_dhcp_option {
@@ -12,6 +13,10 @@ resource "openstack_networking_port_v2" "bootstrap_port" {
 
   fixed_ip {
     subnet_id = var.nodes_subnet_id
+  }
+
+  allowed_address_pairs {
+    ip_address = var.api_int_ip
   }
 
   depends_on = [var.master_port_ids]

@@ -63,6 +63,7 @@ resource "openstack_compute_instance_v2" "master_conf_0" {
 
   flavor_id = data.openstack_compute_flavor_v2.masters_flavor.id
   image_id = var.root_volume_size == null ? var.base_image_id : null
+  security_groups = var.master_sg_ids
   availability_zone = var.zones[0 % length(var.zones)]
   user_data = element(
     data.ignition_config.master_ignition_config.*.rendered,
@@ -110,6 +111,7 @@ resource "openstack_compute_instance_v2" "master_conf_1" {
 
   flavor_id = data.openstack_compute_flavor_v2.masters_flavor.id
   image_id = var.root_volume_size == null ? var.base_image_id : null
+  security_groups = var.master_sg_ids
   availability_zone = var.zones[1 % length(var.zones)]
   user_data = element(
     data.ignition_config.master_ignition_config.*.rendered,
@@ -159,6 +161,7 @@ resource "openstack_compute_instance_v2" "master_conf_2" {
 
   flavor_id = data.openstack_compute_flavor_v2.masters_flavor.id
   image_id = var.root_volume_size == null ? var.base_image_id : null
+  security_groups = var.master_sg_ids
   availability_zone = var.zones[2 % length(var.zones)]
   user_data = element(
     data.ignition_config.master_ignition_config.*.rendered,
