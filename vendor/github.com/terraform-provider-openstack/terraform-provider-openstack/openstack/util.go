@@ -3,6 +3,7 @@ package openstack
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +23,7 @@ func BuildRequest(opts interface{}, parent string) (map[string]interface{}, erro
 
 	b = AddValueSpecs(b)
 
+	log.Printf("[DEBUG] BuildRequest parent: %s\n body: %v", parent, b)
 	return map[string]interface{}{parent: b}, nil
 }
 
