@@ -8,6 +8,10 @@ variable "cluster_id" {
   description = "The identifier for the cluster."
 }
 
+variable "disable_sg" {
+  type = bool
+}
+
 variable "flavor_name" {
   type = string
 }

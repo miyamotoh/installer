@@ -264,6 +264,17 @@ EOF
 
 }
 
+# change default to false later
+variable "disable_sg" {
+  type    = bool
+  default = true
+
+  description = <<EOF
+False if the user wants to use security groups and True to disable their creation (e.g. PowerVC)
+EOF
+
+}
+
 variable "openstack_master_extra_sg_ids" {
   type    = list(string)
   default = []

@@ -3,6 +3,10 @@ variable "base_image_id" {
   description = "The identifier of the Glance image for the bootstrap node."
 }
 
+variable "disable_sg" {
+  type = bool
+}
+
 variable "extra_tags" {
   type    = map(string)
   default = {}

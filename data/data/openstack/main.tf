@@ -26,6 +26,7 @@ module "bootstrap" {
   source = "./bootstrap"
 
   cluster_id              = var.cluster_id
+  disable_sg              = var.disable_sg
   extra_tags              = var.openstack_extra_tags
   base_image_id           = data.openstack_images_image_v2.base_image.id
   flavor_name             = var.openstack_master_flavor_name
@@ -35,7 +36,7 @@ module "bootstrap" {
   cluster_domain          = var.cluster_domain
   nodes_subnet_id         = module.topology.nodes_subnet_id
   private_network_id      = module.topology.private_network_id
-  master_sg_id            = module.topology.master_sg_id
+  master_sg_id            = var.disable_sg ? null : module.topology.master_sg_id
   bootstrap_shim_ignition = var.openstack_bootstrap_shim_ignition
   master_port_ids         = module.topology.master_port_ids
   root_volume_size        = var.openstack_master_root_volume_size
@@ -48,12 +49,13 @@ module "masters" {
   source = "./masters"
 
   base_image_id   = data.openstack_images_image_v2.base_image.id
+  disable_sg      = var.disable_sg
   cluster_id      = var.cluster_id
   flavor_name     = var.openstack_master_flavor_name
   instance_count  = var.master_count
   master_port_ids = module.topology.master_port_ids
   user_data_ign   = var.ignition_master
-  master_sg_ids = concat(
+  master_sg_ids   = var.disable_sg ? null : concat(
     var.openstack_master_extra_sg_ids,
     [module.topology.master_sg_id],
   )
@@ -69,6 +71,7 @@ module "topology" {
 
   cidr_block          = var.machine_v4_cidrs[0]
   cluster_id          = var.cluster_id
+  disable_sg          = var.disable_sg
   cluster_domain      = var.cluster_domain
   external_network    = var.openstack_external_network
   external_network_id = var.openstack_external_network_id
@@ -82,7 +85,7 @@ module "topology" {
   octavia_support     = var.openstack_octavia_support
   machines_subnet_id  = var.openstack_machines_subnet_id
   machines_network_id = var.openstack_machines_network_id
-  master_extra_sg_ids = var.openstack_master_extra_sg_ids
+  master_extra_sg_ids = var.disable_sg ? null : var.openstack_master_extra_sg_ids
 }
 
 data "openstack_images_image_v2" "base_image" {

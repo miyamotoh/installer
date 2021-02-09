@@ -43,10 +43,7 @@ resource "openstack_networking_port_v2" "masters" {
 
   admin_state_up = "true"
   network_id     = local.nodes_network_id
-  security_group_ids = concat(
-    var.master_extra_sg_ids,
-    [openstack_networking_secgroup_v2.master.id],
-  )
+  security_group_ids = var.disable_sg ? null : concat(var.master_extra_sg_ids, [openstack_networking_secgroup_v2.master[0].id],)
   tags = ["openshiftClusterID=${var.cluster_id}"]
 
   extra_dhcp_option {
@@ -74,7 +71,7 @@ resource "openstack_networking_port_v2" "api_port" {
 
   admin_state_up     = "true"
   network_id         = local.nodes_network_id
-  security_group_ids = [openstack_networking_secgroup_v2.master.id]
+  security_group_ids = var.disable_sg ? null : [openstack_networking_secgroup_v2.master[0].id]
   tags               = ["openshiftClusterID=${var.cluster_id}"]
 
   fixed_ip {
@@ -88,7 +85,8 @@ resource "openstack_networking_port_v2" "ingress_port" {
 
   admin_state_up     = "true"
   network_id         = local.nodes_network_id
-  security_group_ids = [openstack_networking_secgroup_v2.worker.id]
+
+  security_group_ids = var.disable_sg ? null : [openstack_networking_secgroup_v2.worker[0].id]
   tags               = ["openshiftClusterID=${var.cluster_id}"]
 
   fixed_ip {
