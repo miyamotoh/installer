@@ -15,8 +15,12 @@ resource "openstack_networking_port_v2" "bootstrap_port" {
     subnet_id = var.nodes_subnet_id
   }
 
-  allowed_address_pairs {
-    ip_address = var.api_int_ip
+  // find a more relevant one-item list to iterate over ?
+  dynamic "allowed_address_pairs" {
+    for_each = var.disable_sg ? [] : [1]
+    content {
+      ip_address = var.api_int_ip
+    }
   }
 
   depends_on = [var.master_port_ids]

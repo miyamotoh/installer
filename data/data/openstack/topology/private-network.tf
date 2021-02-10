@@ -55,12 +55,20 @@ resource "openstack_networking_port_v2" "masters" {
     subnet_id = local.nodes_subnet_id
   }
 
-  allowed_address_pairs {
-    ip_address = var.api_int_ip
+  // find a more relevant one-item list to iterate over ?
+  dynamic "allowed_address_pairs" {
+    for_each = var.disable_sg ? [] : [1]
+    content {
+      ip_address = var.api_int_ip
+    }
   }
 
-  allowed_address_pairs {
-    ip_address = var.ingress_ip
+  // find a more relevant one-item list to iterate over ?
+  dynamic "allowed_address_pairs" {
+    for_each = var.disable_sg ? [] : [1]
+    content {
+      ip_address = var.ingress_ip
+    }
   }
 
   depends_on = [openstack_networking_port_v2.api_port, openstack_networking_port_v2.ingress_port]
