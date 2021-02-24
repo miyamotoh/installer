@@ -8,7 +8,7 @@ variable "cluster_id" {
   description = "The identifier for the cluster."
 }
 
-variable "disable_sg" {
+variable "openstack_disable_sg" {
   type = bool
 }
 

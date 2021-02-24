@@ -3,7 +3,7 @@ variable "base_image_id" {
   description = "The identifier of the Glance image for the bootstrap node."
 }
 
-variable "disable_sg" {
+variable "openstack_disable_sg" {
   type = bool
 }
 

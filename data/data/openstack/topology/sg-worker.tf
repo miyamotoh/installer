@@ -1,5 +1,5 @@
 resource "openstack_networking_secgroup_v2" "worker" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   name = "${var.cluster_id}-worker"
   tags = ["openshiftClusterID=${var.cluster_id}"]
 }
@@ -7,7 +7,7 @@ resource "openstack_networking_secgroup_v2" "worker" {
 # TODO(mandre) Explicitely enable egress
 
 resource "openstack_networking_secgroup_rule_v2" "worker_ingress_icmp" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction      = "ingress"
   ethertype      = "IPv4"
   protocol       = "icmp"
@@ -19,7 +19,7 @@ resource "openstack_networking_secgroup_rule_v2" "worker_ingress_icmp" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "worker_ingress_ssh" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction      = "ingress"
   ethertype      = "IPv4"
   protocol       = "tcp"
@@ -31,7 +31,7 @@ resource "openstack_networking_secgroup_rule_v2" "worker_ingress_ssh" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "worker_ingress_mdns_udp" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "udp"
@@ -42,7 +42,7 @@ resource "openstack_networking_secgroup_rule_v2" "worker_ingress_mdns_udp" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "worker_ingress_http" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
@@ -53,7 +53,7 @@ resource "openstack_networking_secgroup_rule_v2" "worker_ingress_http" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "worker_ingress_https" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
@@ -64,7 +64,7 @@ resource "openstack_networking_secgroup_rule_v2" "worker_ingress_https" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "worker_ingress_router" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
@@ -75,7 +75,7 @@ resource "openstack_networking_secgroup_rule_v2" "worker_ingress_router" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "worker_ingress_vxlan" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "udp"
@@ -86,7 +86,7 @@ resource "openstack_networking_secgroup_rule_v2" "worker_ingress_vxlan" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "worker_ingress_geneve" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "udp"
@@ -97,7 +97,7 @@ resource "openstack_networking_secgroup_rule_v2" "worker_ingress_geneve" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "worker_ingress_ike" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "udp"
@@ -108,7 +108,7 @@ resource "openstack_networking_secgroup_rule_v2" "worker_ingress_ike" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "worker_ingress_ike_nat_t" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "udp"
@@ -119,7 +119,7 @@ resource "openstack_networking_secgroup_rule_v2" "worker_ingress_ike_nat_t" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "worker_ingress_esp" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "esp"
@@ -128,7 +128,7 @@ resource "openstack_networking_secgroup_rule_v2" "worker_ingress_esp" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "worker_ingress_internal" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
@@ -139,7 +139,7 @@ resource "openstack_networking_secgroup_rule_v2" "worker_ingress_internal" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "worker_ingress_internal_udp" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "udp"
@@ -150,7 +150,7 @@ resource "openstack_networking_secgroup_rule_v2" "worker_ingress_internal_udp" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "worker_ingress_kubelet_insecure" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
@@ -161,7 +161,7 @@ resource "openstack_networking_secgroup_rule_v2" "worker_ingress_kubelet_insecur
 }
 
 resource "openstack_networking_secgroup_rule_v2" "worker_ingress_services_tcp" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
@@ -172,7 +172,7 @@ resource "openstack_networking_secgroup_rule_v2" "worker_ingress_services_tcp" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "worker_ingress_services_udp" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "udp"
@@ -183,7 +183,7 @@ resource "openstack_networking_secgroup_rule_v2" "worker_ingress_services_udp" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "worker_ingress_vrrp" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction = "ingress"
   ethertype = "IPv4"
   # Explicitly set the vrrp protocol number to prevent cases when the Neutron Plugin

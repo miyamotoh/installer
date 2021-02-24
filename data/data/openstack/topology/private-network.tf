@@ -43,7 +43,7 @@ resource "openstack_networking_port_v2" "masters" {
 
   admin_state_up = "true"
   network_id     = local.nodes_network_id
-  security_group_ids = var.disable_sg ? null : concat(var.master_extra_sg_ids, [openstack_networking_secgroup_v2.master[0].id],)
+  security_group_ids = var.openstack_disable_sg ? null : concat(var.master_extra_sg_ids, [openstack_networking_secgroup_v2.master[0].id],)
   tags = ["openshiftClusterID=${var.cluster_id}"]
 
   extra_dhcp_option {
@@ -57,7 +57,7 @@ resource "openstack_networking_port_v2" "masters" {
 
   // find a more relevant one-item list to iterate over ?
   dynamic "allowed_address_pairs" {
-    for_each = var.disable_sg ? [] : [1]
+    for_each = var.openstack_disable_sg ? [] : [1]
     content {
       ip_address = var.api_int_ip
     }
@@ -65,7 +65,7 @@ resource "openstack_networking_port_v2" "masters" {
 
   // find a more relevant one-item list to iterate over ?
   dynamic "allowed_address_pairs" {
-    for_each = var.disable_sg ? [] : [1]
+    for_each = var.openstack_disable_sg ? [] : [1]
     content {
       ip_address = var.ingress_ip
     }
@@ -79,7 +79,7 @@ resource "openstack_networking_port_v2" "api_port" {
 
   admin_state_up     = "true"
   network_id         = local.nodes_network_id
-  security_group_ids = var.disable_sg ? null : [openstack_networking_secgroup_v2.master[0].id]
+  security_group_ids = var.openstack_disable_sg ? null : [openstack_networking_secgroup_v2.master[0].id]
   tags               = ["openshiftClusterID=${var.cluster_id}"]
 
   fixed_ip {
@@ -94,7 +94,7 @@ resource "openstack_networking_port_v2" "ingress_port" {
   admin_state_up     = "true"
   network_id         = local.nodes_network_id
 
-  security_group_ids = var.disable_sg ? null : [openstack_networking_secgroup_v2.worker[0].id]
+  security_group_ids = var.openstack_disable_sg ? null : [openstack_networking_secgroup_v2.worker[0].id]
   tags               = ["openshiftClusterID=${var.cluster_id}"]
 
   fixed_ip {

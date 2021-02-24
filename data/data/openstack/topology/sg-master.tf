@@ -1,11 +1,11 @@
 resource "openstack_networking_secgroup_v2" "master" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   name = "${var.cluster_id}-master"
   tags = ["openshiftClusterID=${var.cluster_id}"]
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_mcs" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
@@ -18,7 +18,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_mcs" {
 # TODO(mandre) Explicitely enable egress
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_icmp" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction      = "ingress"
   ethertype      = "IPv4"
   protocol       = "icmp"
@@ -30,7 +30,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_icmp" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_ssh" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction      = "ingress"
   ethertype      = "IPv4"
   protocol       = "tcp"
@@ -42,7 +42,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_ssh" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_dns_tcp" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
@@ -53,7 +53,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_dns_tcp" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_dns_udp" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "udp"
@@ -64,7 +64,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_dns_udp" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_mdns_udp" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "udp"
@@ -75,7 +75,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_mdns_udp" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_https" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction      = "ingress"
   ethertype      = "IPv4"
   protocol       = "tcp"
@@ -87,7 +87,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_https" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_vxlan" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "udp"
@@ -98,7 +98,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_vxlan" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_geneve" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "udp"
@@ -109,7 +109,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_geneve" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_ike" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "udp"
@@ -120,7 +120,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_ike" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_ike_nat_t" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "udp"
@@ -131,7 +131,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_ike_nat_t" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_esp" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "esp"
@@ -140,7 +140,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_esp" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_ovndb" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
@@ -151,7 +151,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_ovndb" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_internal" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
@@ -162,7 +162,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_internal" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_internal_udp" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "udp"
@@ -173,7 +173,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_internal_udp" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_kube_scheduler" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
@@ -184,7 +184,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_kube_scheduler"
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_kube_controller_manager" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
@@ -195,7 +195,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_kube_controller
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_kubelet_secure" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
@@ -206,7 +206,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_kubelet_secure"
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_etcd" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
@@ -217,7 +217,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_etcd" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_services_tcp" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
@@ -228,7 +228,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_services_tcp" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_services_udp" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "udp"
@@ -239,7 +239,7 @@ resource "openstack_networking_secgroup_rule_v2" "master_ingress_services_udp" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "master_ingress_vrrp" {
-  count = var.disable_sg ? 0 : 1
+  count = var.openstack_disable_sg ? 0 : 1
   direction = "ingress"
   ethertype = "IPv4"
   # Explicitly set the vrrp protocol number to prevent cases when the Neutron Plugin

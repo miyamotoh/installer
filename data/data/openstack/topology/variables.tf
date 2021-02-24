@@ -11,7 +11,7 @@ variable "cluster_domain" {
   description = "The domain name of the cluster. All DNS records must be under this domain."
 }
 
-variable "disable_sg" {
+variable "openstack_disable_sg" {
   type = bool
 }
 
