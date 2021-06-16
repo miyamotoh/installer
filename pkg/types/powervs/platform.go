@@ -5,6 +5,15 @@ package powervs
 // use.
 /// used by the installconfig, and filled in by the installconfig/platform/powervs::Platform() func
 type Platform struct {
+	// UserID
+	UserID string `json:"userid"`
+
+	// APIKey
+	APIKey string `json:"apikey"`
+
+	// ResourceGroupName
+	ResourceGroupName string `json:"resourcegroupname"`
+
 	// Region specifies the IBM Cloud region where the cluster will be created.
 	Region string `json:"region"`
 
