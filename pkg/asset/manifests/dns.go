@@ -124,9 +124,7 @@ func (d *DNS) Generate(dependencies asset.Parents) error {
 			config.Spec.PublicZone = &configv1.DNSZone{ID: zone.Name}
 		}
 		config.Spec.PrivateZone = &configv1.DNSZone{ID: fmt.Sprintf("%s-private-zone", clusterID.InfraID)}
-	case libvirttypes.Name, openstacktypes.Name, baremetaltypes.Name, nonetypes.Name, vspheretypes.Name, ovirttypes.Name, kubevirttypes.Name:
-	case powervstypes.Name:
-		// @TODO: Add  DNS config
+	case libvirttypes.Name, openstacktypes.Name, baremetaltypes.Name, nonetypes.Name, vspheretypes.Name, ovirttypes.Name, kubevirttypes.Name, powervstypes.Name:
 	default:
 		return errors.New("invalid Platform")
 	}
