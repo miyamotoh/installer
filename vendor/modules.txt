@@ -1215,6 +1215,8 @@ github.com/openshift/cluster-api-provider-libvirt/pkg/apis/libvirtproviderconfig
 ## explicit
 github.com/openshift/cluster-api-provider-ovirt/pkg/apis
 github.com/openshift/cluster-api-provider-ovirt/pkg/apis/ovirtprovider/v1beta1
+# github.com/openshift/cluster-api-provider-powervs v0.0.1 => github.com/openshift-powervs/cluster-api-provider-powervs v0.0.0-20210519105315-8c84c49e8770
+## explicit
 github.com/openshift/cluster-api-provider-powervs/pkg/apis
 github.com/openshift/cluster-api-provider-powervs/pkg/apis/powervsprovider/v1alpha1
 # github.com/openshift/custom-resource-status v0.0.0-20190822192428-e62f2f3b79f3
