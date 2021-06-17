@@ -21,6 +21,7 @@ import (
 	"github.com/openshift/installer/pkg/types/none"
 	"github.com/openshift/installer/pkg/types/openstack"
 	"github.com/openshift/installer/pkg/types/ovirt"
+	"github.com/openshift/installer/pkg/types/powervs"
 	"github.com/openshift/installer/pkg/types/vsphere"
 )
 
@@ -195,6 +196,14 @@ func (i *Infrastructure) Generate(dependencies asset.Parents) error {
 			APIServerInternalIP: installConfig.Config.Kubevirt.APIVIP,
 			IngressIP:           installConfig.Config.Kubevirt.IngressVIP,
 		}
+	case powervs.Name:
+		config.Spec.PlatformSpec.Type = configv1.IBMCloudPlatformType
+		config.Status.PlatformStatus.IBMCloud = &configv1.IBMCloudPlatformStatus{
+			ResourceGroupName: installConfig.Config.Platform.PowerVS.ResourceGroupName,
+			Location:          installConfig.Config.Platform.PowerVS.Region,
+			ProviderType:      configv1.IBMCloudProviderTypeVPC,
+		}
+
 	default:
 		config.Spec.PlatformSpec.Type = configv1.NonePlatformType
 	}
