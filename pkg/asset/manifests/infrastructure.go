@@ -197,11 +197,10 @@ func (i *Infrastructure) Generate(dependencies asset.Parents) error {
 			IngressIP:           installConfig.Config.Kubevirt.IngressVIP,
 		}
 	case powervs.Name:
-		config.Spec.PlatformSpec.Type = configv1.IBMCloudPlatformType
-		config.Status.PlatformStatus.IBMCloud = &configv1.IBMCloudPlatformStatus{
-			ResourceGroupName: installConfig.Config.Platform.PowerVS.ResourceGroupName,
-			Location:          installConfig.Config.Platform.PowerVS.Region,
-			ProviderType:      configv1.IBMCloudProviderTypeVPC,
+		config.Spec.PlatformSpec.Type = configv1.PowerVSPlatformType
+		config.Status.PlatformStatus.PowerVS = &configv1.PowerVSPlatformStatus{
+			Region: installConfig.Config.Platform.PowerVS.Region,
+			Zone:   installConfig.Config.Platform.PowerVS.Zone,
 		}
 
 	default:
