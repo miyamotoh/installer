@@ -1,9 +1,12 @@
 package powervs
 
 import (
-    "fmt"
-    "os"
-    "time"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"os/user"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -13,9 +16,9 @@ import (
 var (
 	//reqAuthEnvs = []string{"IBMID", "IBMID_PASSWORD"}
 	//optAuthEnvs = []string{"IBMCLOUD_REGION", "IBMCLOUD_ZONE"}
-    //debug = false
-    defSessionTimeout time.Duration = 9000000000000000000.0
-    defRegion = "us_south"
+	//debug = false
+	defSessionTimeout time.Duration = 9000000000000000000.0
+	defRegion                       = "us_south"
 )
 
 // Session is an object representing a session for the IBM Power VS API.
@@ -36,7 +39,7 @@ type Session struct {
 
 //  Yes, I think we'll need to use the IAMToken. There's a two-factor auth built into the ibmcloud login,
 //  so the password alone isn't enough. The IAMToken is generated as a result. So either:
-     1) require the user has done this already and pull from the file 
+     1) require the user has done this already and pull from the file
      2) ask the user to paste in their IAMToken.
      3) let the password env var be the IAMToken? (Going with this atm since it's how I started)
      4) put it into Platform {userid: , iamtoken: , ...}
@@ -47,7 +50,7 @@ func GetSession() (*Session, error) {
 		return nil, errors.Wrap(err, "failed to load credentials")
 	}
 
-    return &Session{session:s}, nil
+	return &Session{session: s}, nil
 }
 
 /*
@@ -55,33 +58,60 @@ func GetSession() (*Session, error) {
 */
 func getPISession() (*ibmpisession.IBMPISession, error) {
 
-    var (
-        id, passwd, region, zone  string
-    )
+	var (
+		id, key, region, zone string
+		err                   error
+	)
 
-	if id = os.Getenv("IBMID"); len(id) == 0 {
-        return nil, errors.New("empty IBMID environment variable")
-    }
-    if passwd = os.Getenv("IBMID_PASSWORD"); len(passwd) == 0 {
-        return nil, errors.New("empty IBMID_PASSWORD variable")
-    }
+	if id = os.Getenv("IBMID"); len(id) != 0 {
+		if key = os.Getenv("IBMID_PASSWORD"); len(key) == 0 {
+			if key, err = authFromJson(); err != nil || len(key) == 0 {
+				return nil, errors.New("unable to find login credentials")
+			}
+		}
+	}
 
-    region = os.Getenv("IBMCLOUD_REGION")
-    // this can also be pulled from  ~/bluemix/config.json
-    if r2 := os.Getenv("IC_REGION"); len(r2) > 0 {
-        if len(region) > 0 && region != r2 {
-            return nil, errors.New(fmt.Sprintf("conflicting values for IBM Cloud Region: IBMCLOUD_REGION: %s and IC_REGION: %s", region, r2))
-        }
-        if len(region) == 0 {
-            region = r2
-        }
-    }
+	region = os.Getenv("IBMCLOUD_REGION")
+	// this can also be pulled from  ~/bluemix/config.json
+	if r2 := os.Getenv("IC_REGION"); len(r2) > 0 {
+		if len(region) > 0 && region != r2 {
+			return nil, errors.New(fmt.Sprintf("conflicting values for IBM Cloud Region: IBMCLOUD_REGION: %s and IC_REGION: %s", region, r2))
+		}
+		if len(region) == 0 {
+			region = r2
+		}
+	}
 
-    if zone = os.Getenv("IBMCLOUD_ZONE"); len(zone) == 0 {
-        zone = region
-    }
+	if zone = os.Getenv("IBMCLOUD_ZONE"); len(zone) == 0 {
+		zone = region
+	}
 
-    // @TOOD: query if region is multi-zone? or just pass through err... 
-    // @TODO: pass through debug?
-	return ibmpisession.New(passwd,region, false, defSessionTimeout, id, zone)
+	// @TOOD: query if region is multi-zone? or just pass through err...
+	// @TODO: pass through debug?
+	return ibmpisession.New(key, region, false, defSessionTimeout, id, zone)
+}
+
+func authFromJson() (key string, err error) {
+
+	// Doing this the ugly way because I can't find the apikey struct with json definitions to unmarshal onto
+	var (
+		apiKey string
+		apiMap map[string]json.RawMessage
+	)
+	user, err := user.Current()
+	if err != nil {
+		return "", err
+	}
+	fileBuf, err := ioutil.ReadFile(fmt.Sprintf("%s%sbluemix.json", user.HomeDir, os.PathSeparator))
+	if err != nil {
+		return "", err
+	}
+	if err = json.Unmarshal(fileBuf, &apiMap); err != nil {
+		return "", err
+	}
+	if err = json.Unmarshal(apiMap["apikey"], &apiKey); err != nil {
+		return "", err
+	}
+	return apiKey, nil
+
 }
