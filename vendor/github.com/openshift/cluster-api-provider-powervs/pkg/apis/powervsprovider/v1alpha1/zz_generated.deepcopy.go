@@ -84,15 +84,6 @@ func (in *PowerVSMachineProviderConfig) DeepCopyInto(out *PowerVSMachineProvider
 	}
 	if in.KeyPairName != nil {
 		in, out := &in.KeyPairName, &out.KeyPairName
-=======
-	if in.Subnets != nil {
-		in, out := &in.Subnets, &out.Subnets
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
-	if in.KeyName != nil {
-		in, out := &in.KeyName, &out.KeyName
->>>>>>> 22a8084bb (machine asset vendor update)
 		*out = new(string)
 		**out = **in
 	}
