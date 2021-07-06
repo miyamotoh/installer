@@ -107,7 +107,7 @@ func (a *PlatformProvisionCheck) Generate(dependencies asset.Parents) error {
 			return err
 		}
 	case powervs.Name:
-		err = powervsconfig.ValidateForProvisioning()
+		err = powervsconfig.ValidateForProvisioning(ic.Config.PowerVS)
 		if err != nil {
 			return err
 		}

@@ -4,6 +4,9 @@ package powervs
 // use.
 /// used by the installconfig, and filled in by the installconfig/platform/powervs::Platform() func
 type Platform struct {
+	// UserID specifies the IBM Cloud User ID with which to authenticate.
+	UserID string `json:"userid"`
+
 	// Region specifies the IBM Cloud region where the cluster will be created.
 	Region string `json:"region"`
 
