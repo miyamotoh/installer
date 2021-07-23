@@ -8,11 +8,11 @@ import (
 )
 
 type IBMCloud struct {
-	IBMCloudAPIKey      string `json:"ibmcloud_api_key"`
-	IBMCloudRegion      string `json:"ibmcloud_region"`
-	IBMCloudZone        string `json:"ibmcloud_zone"`
-	IAASClassicUserName string `json:"iaas_classic_username"`
-	IAASClassicAPIKey   string `json:"iaas_classic_api_key"`
+	IBMCloudAPIKey      string `json:"powervs_api_key"`
+	IBMCloudRegion      string `json:"powervs_region"`
+	IBMCloudZone        string `json:"powervs_zone"`
+	IAASClassicUserName string `json:"powervs_iaas_classic_username"`
+	IAASClassicAPIKey   string `json:"powervs_iaas_classic_api_key"`
 }
 
 type config struct {

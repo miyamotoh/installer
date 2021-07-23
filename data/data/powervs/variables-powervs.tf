@@ -1,22 +1,23 @@
 ################################################################
 # Configure the IBM Cloud provider
 ################################################################
-variable "ibmcloud_api_key" {
+variable "powervs_api_key" {
   type        = string
   description = "IBM Cloud API key associated with user's identity"
   default     = "<key>"
 }
 
-variable "ibmcloud_region" {
+variable "powervs_region" {
   type        = string
   description = "The IBM Cloud region where you want to create the resources"
-  default     = ""
+  default     = "eu-gb"
+  ##default     = "eu-gb"
 }
 
-variable "ibmcloud_zone" {
+variable "powervs_zone" {
   type        = string
   description = "The zone of an IBM Cloud region where you want to create Power System resources"
-  default     = ""
+  default     = "lon04"
 }
 
 variable "powervs_resource_group" {
@@ -28,7 +29,8 @@ variable "powervs_resource_group" {
 variable "powervs_cloud_instance_id" {
   type        = string
   description = "The cloud instance ID of your account"
-  default     = ""
+  ## TODO: erase default and set via install-config
+  default     = "powervs-ipi-lon04"
 }
 
 ################################################################
@@ -63,6 +65,7 @@ variable "powervs_image_name" {
 variable "powervs_network_name" {
   type        = string
   description = "Name of the network used by the all nodes in the cluster."
+  default     = "pvs-ipi-net"
 }
 
 variable "powervs_bootstrap_memory" {
@@ -119,14 +122,17 @@ variable "powervs_ssh_key" {
   default     = ""
 }
 
+## TODO: Set this in install-config instead
+## TODO: rename to vpc_id? nope
 variable "powervs_vpc_name" {
   type        = string
   description = "Name of the IBM Cloud Virtual Private Cloud (VPC) to setup the load balancer."
-  default     = ""
+  default     = "powervs-ipi"
 }
 
+## TODO: rename to subnet_id?
 variable "powervs_vpc_subnet_name" {
   type        = string
   description = "Name of the VPC subnet having DirectLink access to the PowerVS private network"
-  default     = ""
+  default     = "0797-3ad4cd4b-2fd3-4813-9790-b4f81c2e2be2"
 }
