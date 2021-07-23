@@ -652,26 +652,26 @@ func (t *TerraformVariables) Generate(parents asset.Parents) error {
 		}
 
 		ibmCloud := powervstfvars.IBMCloud{
-			IBMCloudAPIKey:	session.Session.IAMToken,
-			IBMCloudRegion:	session.Session.Region,
-			IBMCloudZone:	session.Session.Zone,
-			IAASClassicUserName: "",
-			IAASClassicAPIKey: "",
+			IBMCloudAPIKey:      session.Session.IAMToken,
+			IBMCloudRegion:      session.Session.Region,
+			IBMCloudZone:        session.Session.Zone,
+			IAASClassicUserName: "apikey",
+			IAASClassicAPIKey:   session.Session.IAMToken,
 		}
 
 		data, err = powervstfvars.TFVars(
 			powervstfvars.TFVarsSources{
-				MasterConfigs:	masterConfigs,
-				IBMCloud:	ibmCloud,
+				MasterConfigs: masterConfigs,
+				IBMCloud:      ibmCloud,
 			},
 		)
 		if err != nil {
 			return errors.Wrapf(err, "failed to get %s Terraform variables", platform)
 		}
 		t.FileList = append(t.FileList, &asset.File{
-                        Filename: fmt.Sprintf(TfPlatformVarsFileName, platform),
-                        Data:     data,
-                })
+			Filename: fmt.Sprintf(TfPlatformVarsFileName, platform),
+			Data:     data,
+		})
 
 	case vsphere.Name:
 		controlPlanes, err := mastersAsset.Machines()

@@ -123,16 +123,14 @@ variable "powervs_ssh_key" {
 }
 
 ## TODO: Set this in install-config instead
-## TODO: rename to vpc_id? nope
 variable "powervs_vpc_name" {
   type        = string
   description = "Name of the IBM Cloud Virtual Private Cloud (VPC) to setup the load balancer."
   default     = "powervs-ipi"
 }
 
-## TODO: rename to subnet_id?
 variable "powervs_vpc_subnet_name" {
   type        = string
   description = "Name of the VPC subnet having DirectLink access to the PowerVS private network"
-  default     = "0797-3ad4cd4b-2fd3-4813-9790-b4f81c2e2be2"
+  default     = "subnet2"
 }
