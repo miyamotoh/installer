@@ -37,10 +37,6 @@ module "bootstrap" {
   proc_type  = var.powervs_proc_type
   key_id     = ibm_pi_key.cluster_key.key_id
 
-  # TODO(mjturek): image and network IDs are not derived during terraform
-  #                for other providers. Need to investigate and follow how
-  #                other providers do this. cnorman's branch has some work
-  #                towards this already.
   image_name   = var.powervs_image_name
   network_name = var.powervs_network_name
 }
@@ -62,10 +58,6 @@ module "master" {
   proc_type  = var.powervs_proc_type
   key_id     = ibm_pi_key.cluster_key.key_id
 
-  # TODO(mjturek): image and network IDs are not derived during terraform
-  #                for other providers. Need to investigate and follow how
-  #                other providers do this. cnorman's branch has some work
-  #                towards this already.
   image_name   = var.powervs_image_name
   network_name = var.powervs_network_name
 }
