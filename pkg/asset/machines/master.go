@@ -411,11 +411,12 @@ func (m *Master) Generate(dependencies asset.Parents) error {
 		mpool.Set(ic.Platform.PowerVS.DefaultMachinePlatform)
 		mpool.Set(pool.Platform.PowerVS)
 		// TODO: Temporary patch to link to the deployed machines in the backend, later should be removed
+		// Only the service instance is guaranteed to exist and be passed via the install config
+		// The other two, we should standardize a name including the cluster id. At this point, all
+		// we have are names
 		hardcode := &powervstypes.MachinePool{
-			ServiceInstance: "e449d86e-c3a0-4c07-959e-8557fdf55482",
-			ImageID:         "11b3470c-e747-4f92-ba70-428054ca4672",
-			KeyPairName:     clusterID.InfraID + "-key",
-			NetworkIDs:      []string{"daf2b616-542b-47ed-8cec-ceaec1e90f4d"},
+			ImageID:    fmt.Sprintf("rhcos-%s", clusterID.InfraID),
+			NetworkIDs: []string{fmt.Sprintf("pvs-net-%s", clusterID.InfraID)},
 		}
 		mpool.Set(hardcode)
 		pool.Platform.PowerVS = &mpool
