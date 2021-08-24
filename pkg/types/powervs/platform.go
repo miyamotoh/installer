@@ -4,6 +4,10 @@ package powervs
 // use.
 /// used by the installconfig, and filled in by the installconfig/platform/powervs::Platform() func
 type Platform struct {
+
+	// ServiceInstanceID is the ID of the Power IAAS instance created from the IBM Cloud Catalog
+	ServiceInstanceID string `json:"serviceInstance"`
+
 	// Region specifies the IBM Cloud region where the cluster will be created.
 	Region string `json:"region"`
 
@@ -11,13 +15,15 @@ type Platform struct {
 	// Required for multi-zone regions.
 	Zone string `json:"zone"`
 
-	UserID string `json:"userid"`
-	APIKey string `json:"apikey"`
+	// UserID is the login for the user's IBM Cloud account
+	UserID string `json:"userID"`
+
+	// APIKey is the API key for the user's IBM Cloud account
+	APIKey string `json:"APIKey"`
 
 	// Subnets specifies existing subnets (by ID) where cluster
 	// resources will be created.  Leave unset to have the installer
-	// create subnets in a new VPC on your behalf.
-	// @TODO: how will we handle networking?
+	// create a default subnet
 	//
 	// +optional ?
 	Subnets []string `json:"subnets,omitempty"`
