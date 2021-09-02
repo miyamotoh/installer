@@ -26,6 +26,15 @@ func Machines(clusterID string, config *types.InstallConfig, pool *types.Machine
 	mpool.ImageID = "rhcos-49-84-202108041519-0"
 	mpool.NetworkIDs = []string{"pvs-ipi-net"}
 
+	// Only the service instance is guaranteed to exist and be passed via the install config
+	// The other two, we should standardize a name including the cluster id.
+	if mpool.ImageID == "" {
+		mpool.ImageID = fmt.Sprintf("rhcos-%s", clusterID)
+	}
+	if len(mpool.NetworkIDs) == 0 {
+		mpool.NetworkIDs = append([]string{fmt.Sprintf("pvs-net-%s", clusterID)})
+	}
+
 	total := int64(1)
 	if pool.Replicas != nil {
 		total = *pool.Replicas

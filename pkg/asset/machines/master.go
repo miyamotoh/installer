@@ -419,8 +419,6 @@ func (m *Master) Generate(dependencies asset.Parents) error {
 		}
 		mpool.Set(hardcode)
 		pool.Platform.PowerVS = &mpool
-		//TODO: Should we set get and set service instanceid, imageid, subnetid here?
-		//TODO: Revisit later to find, from where we can get values for the these variables
 		machines, err = powervs.Machines(clusterID.InfraID, ic, &pool, "master", "master-user-data", installConfig.Config.Platform.PowerVS.UserTags)
 		if err != nil {
 			return errors.Wrap(err, "failed to create master machine objects")
