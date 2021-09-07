@@ -14,6 +14,8 @@ type Platform struct {
 	UserID string `json:"userid"`
 	APIKey string `json:"apikey"`
 
+	VPC string `json:"vpc"`
+
 	// Subnets specifies existing subnets (by ID) where cluster
 	// resources will be created.  Leave unset to have the installer
 	// create subnets in a new VPC on your behalf.
@@ -21,6 +23,10 @@ type Platform struct {
 	//
 	// +optional ?
 	Subnets []string `json:"subnets,omitempty"`
+
+	// PVSNetwork specifies an existing network withing the Power VS Service Instance.
+	// Leave unset to have the installer create the networking.
+	PVSNetwork string `json:"pvsNetwork"`
 
 	// UserTags additional keys and values that the installer will add
 	// as tags to all resources that it creates. Resources created by the
