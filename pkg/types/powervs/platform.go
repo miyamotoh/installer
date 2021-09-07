@@ -21,12 +21,18 @@ type Platform struct {
 	// APIKey is the API key for the user's IBM Cloud account
 	APIKey string `json:"APIKey"`
 
+	VPC string `json:"vpc"`
+
 	// Subnets specifies existing subnets (by ID) where cluster
 	// resources will be created.  Leave unset to have the installer
 	// create a default subnet
 	//
 	// +optional ?
 	Subnets []string `json:"subnets,omitempty"`
+
+	// PVSNetwork specifies an existing network withing the Power VS Service Instance.
+	// Leave unset to have the installer create the networking.
+	PVSNetwork string `json:"pvsNetwork"`
 
 	// UserTags additional keys and values that the installer will add
 	// as tags to all resources that it creates. Resources created by the

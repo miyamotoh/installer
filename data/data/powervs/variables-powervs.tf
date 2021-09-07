@@ -62,12 +62,6 @@ variable "powervs_image_name" {
   description = "Name of the image used by all nodes in the cluster."
 }
 
-variable "powervs_network_name" {
-  type        = string
-  description = "Name of the network used by the all nodes in the cluster."
-  default     = "pvs-ipi-net"
-}
-
 variable "powervs_bootstrap_memory" {
   type        = string
   description = "Amount of memory, in  GiB, used by the bootstrap node."
@@ -109,22 +103,40 @@ variable "powervs_ssh_key" {
   description = "Public key for keypair used to access cluster. Required when creating 'ibm_pi_instance' resources."
 }
 
-## TODO: Set this in install-config instead
+################################################################
+# Configure Network Topology
+################################################################
+variable "powervs_network_name" {
+  type        = string
+  description = "Name of the network used by the all nodes in the cluster."
+  default     = "pvs-ipi-net-${var.cluster_id}"
+}
+
+variable "powervs_network_name" {
+  type        = string
+  description = "Name of the network created within the Power VS instance."
+  default     = "pvs-net-${var.cluster_id}"
+}
+
 variable "powervs_vpc_name" {
   type        = string
   description = "Name of the IBM Cloud Virtual Private Cloud (VPC) to setup the load balancer."
-  default     = "powervs-ipi"
+  default     = "vpc-${var.cluster_id}"
 }
 
 variable "powervs_vpc_subnet_name" {
   type        = string
   description = "Name of the VPC subnet having DirectLink access to the PowerVS private network"
-  default     = "subnet2"
+  default     = "vpc-subnet-${var.cluster_id}"
 }
 
+################################################################
+# Configure DNS
+################################################################
 ## TODO: Pass the CIS CRN from the installer program, refer the IBM Cloud code to see the implementation.
 variable "powervs_cis_crn" {
   type        = string
   description = "The CRN of CIS instance to use."
   default     = "crn:v1:bluemix:public:internet-svcs:global:a/65b64c1f1c29460e8c2e4bbfbd893c2c:453c4cff-2ee0-4309-95f1-2e9384d9bb96::"
 }
+
