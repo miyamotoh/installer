@@ -16,12 +16,6 @@ import (
 // Platform collects powervs-specific configuration.
 func Platform() (*powervs.Platform, error) {
 	regions := knownRegions()
-
-	// TODO(cklokman): This section came from aws and transforms the response from knownRegions
-	//                 into long and short regions to prompt the user for region select this section
-	//                 need need to be different based on powervs's implementation of knownRegions
-	//
-
 	longRegions := make([]string, 0, len(regions))
 	shortRegions := make([]string, 0, len(regions))
 	for id, location := range regions {
