@@ -108,13 +108,7 @@ variable "powervs_ssh_key" {
 ################################################################
 variable "powervs_network_name" {
   type        = string
-  description = "Name of the network used by the all nodes in the cluster."
-  default     = "pvs-ipi-net-${var.cluster_id}"
-}
-
-variable "powervs_network_name" {
-  type        = string
-  description = "Name of the network created within the Power VS instance."
+  description = "Name of the network within the Power VS instance"
   default     = "pvs-net-${var.cluster_id}"
 }
 
@@ -126,7 +120,7 @@ variable "powervs_vpc_name" {
 
 variable "powervs_vpc_subnet_name" {
   type        = string
-  description = "Name of the VPC subnet having DirectLink access to the PowerVS private network"
+  description = "Name of the VPC subnet connected via DirectLink to the Power VS private network"
   default     = "vpc-subnet-${var.cluster_id}"
 }
 
