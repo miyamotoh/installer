@@ -76,7 +76,7 @@ func provider(clusterID string, platform *powervs.Platform, mpool *powervs.Machi
 			APIVersion: powervsprovider.GroupVersion.String(),
 		},
 		ObjectMeta:        metav1.ObjectMeta{},
-		ServiceInstanceID: mpool.ServiceInstance,
+		ServiceInstanceID: platform.ServiceInstanceID,
 		ImageID:           mpool.ImageID,
 		UserDataSecret:    &corev1.LocalObjectReference{Name: userDataSecret},
 		CredentialsSecret: &corev1.LocalObjectReference{Name: "powervs-credentials"},

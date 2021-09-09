@@ -25,6 +25,7 @@ var powervsRegionToIBMRegion = map[string]string{
 }
 
 type config struct {
+	ServiceInstanceID    string `json:"powervs_cloud_instance_id"`
 	APIKey               string `json:"powervs_api_key"`
 	PowerVSRegion        string `json:"powervs_region"`
 	PowerVSZone          string `json:"powervs_zone"`
@@ -49,6 +50,7 @@ type TFVarsSources struct {
 	PowerVSRegion        string
 	PowerVSZone          string
 	PowerVSResourceGroup string
+	ServiceInstanceID    string
 }
 
 // TFVars generates Power VS-specific Terraform variables launching the cluster.
@@ -59,6 +61,7 @@ func TFVars(sources TFVarsSources) ([]byte, error) {
 	//  -- change ImageID to ImageURL here?
 	//  --
 	cfg := &config{
+		ServiceInstanceID:    sources.ServiceInstanceID,
 		APIKey:               sources.APIKey,
 		PowerVSRegion:        sources.PowerVSRegion,
 		PowerVSZone:          sources.PowerVSZone,

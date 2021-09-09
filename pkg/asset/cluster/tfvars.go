@@ -659,6 +659,7 @@ func (t *TerraformVariables) Generate(parents asset.Parents) error {
 				PowerVSZone:          session.Session.Zone,
 				APIKey:               session.Session.IAMToken,
 				SSHKey:               installConfig.Config.SSHKey,
+				ServiceInstanceID:    installConfig.Config.PowerVS.ServiceInstanceID,
 				PowerVSResourceGroup: installConfig.Config.PowerVS.PowerVSResourceGroup,
 			},
 		)

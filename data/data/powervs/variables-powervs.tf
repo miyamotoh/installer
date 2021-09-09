@@ -23,14 +23,11 @@ variable "powervs_region" {
 variable "powervs_resource_group" {
   type        = string
   description = "The cloud instance resource group"
-  default     = ""
 }
 
 variable "powervs_cloud_instance_id" {
   type        = string
   description = "The cloud instance ID of your account"
-  ## TODO: erase default and set via install-config
-  default = "e449d86e-c3a0-4c07-959e-8557fdf55482"
 }
 
 ################################################################
