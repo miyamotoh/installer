@@ -39,11 +39,11 @@ type Platform struct {
 	// +optional
 	Subnets []string `json:"subnets,omitempty"`
 
-	// PVSNetwork specifies an existing network withing the Power VS Service Instance.
+	// PVSNetworkID specifies an existing network withing the Power VS Service Instance.
 	// Leave unset to have the installer create the network.
 	//
 	// +optional
-	PVSNetwork string `json:"pvsNetwork,omitempty"`
+	PVSNetworkID string `json:"pvsNetworkID,omitempty"`
 
 	// UserTags additional keys and values that the installer will add
 	// as tags to all resources that it creates. Resources created by the

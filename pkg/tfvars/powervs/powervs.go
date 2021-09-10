@@ -46,11 +46,8 @@ type config struct {
 type TFVarsSources struct {
 	MasterConfigs        []*v1alpha1.PowerVSMachineProviderConfig
 	APIKey               string
-	SSHKey               string
-	PowerVSRegion        string
 	PowerVSZone          string
 	PowerVSResourceGroup string
-	ServiceInstanceID    string
 }
 
 // TFVars generates Power VS-specific Terraform variables launching the cluster.
@@ -58,16 +55,14 @@ func TFVars(sources TFVarsSources) ([]byte, error) {
 	masterConfig := sources.MasterConfigs[0]
 
 	//@TODO: Add resource group to platform
-	//  -- change ImageID to ImageURL here?
-	//  --
 	cfg := &config{
-		ServiceInstanceID:    sources.ServiceInstanceID,
+		ServiceInstanceID:    masterConfig.ServiceInstanceID,
 		APIKey:               sources.APIKey,
-		PowerVSRegion:        sources.PowerVSRegion,
+		PowerVSRegion:        masterConfig.Region,
 		PowerVSZone:          sources.PowerVSZone,
-		VPCRegion:            powervsRegionToIBMRegion[sources.PowerVSRegion],
+		VPCRegion:            powervsRegionToIBMRegion[masterConfig.Region],
 		PowerVSResourceGroup: sources.PowerVSResourceGroup,
-		SSHKey:               sources.SSHKey,
+		SSHKey:               *masterConfig.KeyPairName,
 		ImageID:              masterConfig.ImageID,
 		NetworkIDs:           masterConfig.NetworkIDs[0],
 		BootstrapMemory:      masterConfig.Memory,

@@ -409,16 +409,19 @@ func (m *Master) Generate(dependencies asset.Parents) error {
 	case powervstypes.Name:
 		mpool := defaultPowerVSMachinePoolPlatform()
 		mpool.Set(ic.Platform.PowerVS.DefaultMachinePlatform)
-		mpool.Set(pool.Platform.PowerVS)
+		mpool.Set(pool.Platform.PowerVS) //pool == installConfig.Config.ControlPlane, which is a *MachinePool, and is mostly empty except for name and arch
 		// TODO: Temporary patch to link to the deployed machines in the backend, later should be removed
 		// Only the service instance is guaranteed to exist and be passed via the install config
 		// The other two, we should standardize a name including the cluster id. At this point, all
-		// we have are names
-		hardcode := &powervstypes.MachinePool{
+		// we have are names.
+		/*hardcode := &powervstypes.MachinePool{
 			ImageID:    fmt.Sprintf("rhcos-%s", clusterID.InfraID),
+			// When not passed via the install config, we have to somehow have the ID of a thing we haven't yet created.
+			// So this *has* to be a name, and the machine api will have to get the ID programatically
 			NetworkIDs: []string{fmt.Sprintf("pvs-net-%s", clusterID.InfraID)},
 		}
 		mpool.Set(hardcode)
+		*/
 		pool.Platform.PowerVS = &mpool
 		machines, err = powervs.Machines(clusterID.InfraID, ic, &pool, "master", "master-user-data", installConfig.Config.Platform.PowerVS.UserTags)
 		if err != nil {

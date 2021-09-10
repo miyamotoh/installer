@@ -28,8 +28,14 @@ func Machines(clusterID string, config *types.InstallConfig, pool *types.Machine
 	if mpool.ImageID == "" {
 		mpool.ImageID = fmt.Sprintf("rhcos-%s", clusterID)
 	}
-	if len(mpool.NetworkIDs) == 0 {
-		mpool.NetworkIDs = append([]string{fmt.Sprintf("pvs-net-%s", clusterID)})
+
+	// Set the Power VS network name (for now, the ID, but we need to change it to the name)
+	// in pkg/asset/master.go: mpool.Set(pool.Platform.PowerVS), where pool is the ControPlane from the IC
+	if platform.PVSNetworkID != "" {
+		mpool.NetworkIDs = append([]string{platform.PVSNetworkID})
+	}
+	if platform.ClusterOSImage != "" {
+		mpool.ImageID = platform.ClusterOSImage
 	}
 
 	total := int64(1)
