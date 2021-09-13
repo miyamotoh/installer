@@ -31,14 +31,6 @@ type Platform struct {
 	// +optional
 	VPC string `json:"vpc,omitempty"`
 
-	// Subnets specifies existing subnets (by ID) where cluster
-	// resources will be created.  Leave unset to have the installer
-	// create a default subnet.
-	// @TODO: Rename to VPCSubnets, and make a plain string
-	//
-	// +optional
-	Subnets []string `json:"subnets,omitempty"`
-
 	// PVSNetworkID specifies an existing network withing the Power VS Service Instance.
 	// Leave unset to have the installer create the network.
 	//

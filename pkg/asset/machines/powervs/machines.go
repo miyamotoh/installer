@@ -25,17 +25,16 @@ func Machines(clusterID string, config *types.InstallConfig, pool *types.Machine
 
 	// Only the service instance is guaranteed to exist and be passed via the install config
 	// The other two, we should standardize a name including the cluster id.
-	if mpool.ImageID == "" {
-		mpool.ImageID = fmt.Sprintf("rhcos-%s", clusterID)
-	}
 
-	// Set the Power VS network name (for now, the ID, but we need to change it to the name)
 	// in pkg/asset/master.go: mpool.Set(pool.Platform.PowerVS), where pool is the ControPlane from the IC
 	if platform.PVSNetworkID != "" {
 		mpool.NetworkIDs = append([]string{platform.PVSNetworkID})
 	}
 	if platform.ClusterOSImage != "" {
 		mpool.ImageID = platform.ClusterOSImage
+	}
+	if mpool.ImageID == "" {
+		mpool.ImageID = fmt.Sprintf("rhcos-%s", clusterID)
 	}
 
 	total := int64(1)
