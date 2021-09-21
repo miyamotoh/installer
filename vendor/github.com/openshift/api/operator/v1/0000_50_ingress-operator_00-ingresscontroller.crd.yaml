@@ -136,7 +136,8 @@ spec:
                   scope)   Azure:        LoadBalancerService (with External scope)
                   \  GCP:          LoadBalancerService (with External scope)   IBMCloud:
                   \    LoadBalancerService (with External scope)   AlibabaCloud: LoadBalancerService
-                  (with External scope)   Libvirt:      HostNetwork \n Any other platform
+                  (with External scope)   PowerVS:      LoadBalancerService (with
+                  External scope)   Libvirt:      HostNetwork \n Any other platform
                   types (including None) default to HostNetwork. \n endpointPublishingStrategy
                   cannot be updated."
                 properties:

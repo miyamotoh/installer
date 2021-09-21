@@ -168,3 +168,5 @@ replace (
 )
 
 replace k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20210305001622-591a79e4bda7
+
+replace github.com/openshift/api => github.com/clnperez/api v0.0.0-20210921225635-8ae7b2a49351

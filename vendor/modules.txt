@@ -1393,7 +1393,7 @@ github.com/opencontainers/image-spec/specs-go/v1
 # github.com/openshift-metal3/terraform-provider-ironic v0.2.6
 ## explicit
 github.com/openshift-metal3/terraform-provider-ironic/ironic
-# github.com/openshift/api v0.0.0-20210920190954-319827aa4c77
+# github.com/openshift/api v0.0.0-20210920190954-319827aa4c77 => github.com/clnperez/api v0.0.0-20210921225635-8ae7b2a49351
 ## explicit
 github.com/openshift/api/config/v1
 github.com/openshift/api/operator/v1
@@ -2967,3 +2967,4 @@ sigs.k8s.io/yaml
 # google.golang.org/genproto => google.golang.org/genproto v0.0.0-20200526211855-cb27e3aa2013
 # google.golang.org/grpc => google.golang.org/grpc v1.29.1
 # k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20210305001622-591a79e4bda7
+# github.com/openshift/api => github.com/clnperez/api v0.0.0-20210921225635-8ae7b2a49351

@@ -92,6 +92,7 @@ type IngressControllerSpec struct {
 	//   GCP:          LoadBalancerService (with External scope)
 	//   IBMCloud:     LoadBalancerService (with External scope)
 	//   AlibabaCloud: LoadBalancerService (with External scope)
+	//   PowerVS:      LoadBalancerService (with External scope)
 	//   Libvirt:      HostNetwork
 	//
 	// Any other platform types (including None) default to HostNetwork.
@@ -351,7 +352,7 @@ type ProviderLoadBalancerParameters struct {
 
 // LoadBalancerProviderType is the underlying infrastructure provider for the
 // load balancer. Allowed values are "AWS", "Azure", "BareMetal", "GCP",
-// "OpenStack", and "VSphere".
+// "IBMCloud", "OpenStack", "PowerVS", and "VSphere".
 //
 // +kubebuilder:validation:Enum=AWS;Azure;BareMetal;GCP;OpenStack;VSphere;IBM
 type LoadBalancerProviderType string
@@ -365,6 +366,7 @@ const (
 	IBMLoadBalancerProvider          LoadBalancerProviderType = "IBM"
 	BareMetalLoadBalancerProvider    LoadBalancerProviderType = "BareMetal"
 	AlibabaCloudLoadBalancerProvider LoadBalancerProviderType = "AlibabaCloud"
+	PowerVSLoadBalancerProvider      LoadBalancerProviderType = "PowerVS"
 )
 
 // AWSLoadBalancerParameters provides configuration settings that are
