@@ -1177,6 +1177,7 @@ var map_PlatformStatus = map[string]string{
 	"baremetal":    "BareMetal contains settings specific to the BareMetal platform.",
 	"openstack":    "OpenStack contains settings specific to the OpenStack infrastructure provider.",
 	"ovirt":        "Ovirt contains settings specific to the oVirt infrastructure provider.",
+	"powervs":      "PowerVS contains settings specific to the IBM Power Systems Virtual Server infrastructure.",
 	"vsphere":      "VSphere contains settings specific to the VSphere infrastructure provider.",
 	"ibmcloud":     "IBMCloud contains settings specific to the IBMCloud infrastructure provider.",
 	"kubevirt":     "Kubevirt contains settings specific to the kubevirt infrastructure provider.",

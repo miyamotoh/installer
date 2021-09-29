@@ -69,13 +69,8 @@ require (
 	github.com/openshift/cluster-api-provider-ibmcloud v0.0.0-20210702173623-676faba9895d
 	github.com/openshift/cluster-api-provider-kubevirt v0.0.0-20210719100556-9b8bc3666720
 	github.com/openshift/cluster-api-provider-libvirt v0.2.1-0.20191219173431-2336783d4603
-<<<<<<< HEAD
 	github.com/openshift/cluster-api-provider-ovirt v0.1.1-0.20210817084941-2262c7c6cece
-	github.com/openshift/cluster-api-provider-powervs v0.0.2-0.20210621075832-a5ccc9c865e7
-=======
-	github.com/openshift/cluster-api-provider-ovirt v0.1.1-0.20210622084102-c4f9f269bcb7
-	github.com/openshift/cluster-api-provider-powervs v0.0.2-0.20210806061429-9423a0d25465
->>>>>>> e7f2848a0 (vendor changes)
+	github.com/openshift/cluster-api-provider-powervs v0.0.2-0.20210928133618-8eb5ebcb07a1
 	github.com/openshift/library-go v0.0.0-20210408164723-7a65fdb398e2
 	github.com/openshift/machine-api-operator v0.2.1-0.20210505133115-b7ef098180db
 	github.com/openshift/machine-config-operator v0.0.0

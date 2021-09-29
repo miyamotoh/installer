@@ -288,6 +288,10 @@ type PlatformStatus struct {
 	// +optional
 	Ovirt *OvirtPlatformStatus `json:"ovirt,omitempty"`
 
+	// PowerVS contains settings specific to the IBM Power Systems Virtual Server infrastructure.
+	// +optional
+	PowerVS *PowerVSPlatformStatus `json:"powervs,omitempty"`
+
 	// VSphere contains settings specific to the VSphere infrastructure provider.
 	// +optional
 	VSphere *VSpherePlatformStatus `json:"vsphere,omitempty"`

@@ -3460,6 +3460,11 @@ func (in *PlatformStatus) DeepCopyInto(out *PlatformStatus) {
 		*out = new(OvirtPlatformStatus)
 		**out = **in
 	}
+	if in.PowerVS != nil {
+		in, out := &in.PowerVS, &out.PowerVS
+		*out = new(PowerVSPlatformStatus)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.VSphere != nil {
 		in, out := &in.VSphere, &out.VSphere
 		*out = new(VSpherePlatformStatus)
