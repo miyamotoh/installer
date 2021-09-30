@@ -16,6 +16,7 @@ variable "powervs_vpc_region" {
 variable "powervs_vpc_zone" {
   type        = string
   description = "The IBM Cloud zone associated with the VPC region you're using"
+}
 
 variable "powervs_region" {
   type        = string
