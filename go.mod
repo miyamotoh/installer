@@ -169,6 +169,4 @@ replace (
 	google.golang.org/grpc => google.golang.org/grpc v1.29.1
 )
 
-replace k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20210305001622-591a79e4bda7
-
 replace github.com/openshift/machine-api-operator => github.com/openshift-powervs/machine-api-operator v0.2.1-0.20210809115935-a9fd8f5d2767

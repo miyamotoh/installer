@@ -735,9 +735,9 @@ github.com/go-openapi/analysis
 github.com/go-openapi/analysis/internal
 # github.com/go-openapi/errors v0.19.8 => github.com/go-openapi/errors v0.19.2
 github.com/go-openapi/errors
-# github.com/go-openapi/jsonpointer v0.19.5
+# github.com/go-openapi/jsonpointer v0.19.3
 github.com/go-openapi/jsonpointer
-# github.com/go-openapi/jsonreference v0.19.5
+# github.com/go-openapi/jsonreference v0.19.4
 github.com/go-openapi/jsonreference
 # github.com/go-openapi/loads v0.19.4
 github.com/go-openapi/loads
@@ -754,7 +754,7 @@ github.com/go-openapi/runtime/security
 github.com/go-openapi/spec
 # github.com/go-openapi/strfmt v0.20.1
 github.com/go-openapi/strfmt
-# github.com/go-openapi/swag v0.19.14
+# github.com/go-openapi/swag v0.19.9
 github.com/go-openapi/swag
 # github.com/go-openapi/validate v0.20.1 => github.com/go-openapi/validate v0.19.8
 github.com/go-openapi/validate
@@ -1394,7 +1394,7 @@ github.com/opencontainers/image-spec/specs-go/v1
 # github.com/openshift-metal3/terraform-provider-ironic v0.2.6
 ## explicit
 github.com/openshift-metal3/terraform-provider-ironic/ironic
-# github.com/openshift/api v0.0.0-20210924154557-a4f696157341
+# github.com/openshift/api v0.0.0-20210924154557-a4f696157341 => github.com/openshift-powervs/api v0.0.0-20210729234416-b883aff9d9db
 ## explicit
 github.com/openshift/api/config/v1
 github.com/openshift/api/operator/v1
@@ -2972,5 +2972,4 @@ sigs.k8s.io/yaml
 # google.golang.org/api => google.golang.org/api v0.25.0
 # google.golang.org/genproto => google.golang.org/genproto v0.0.0-20200526211855-cb27e3aa2013
 # google.golang.org/grpc => google.golang.org/grpc v1.29.1
-# k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20210305001622-591a79e4bda7
 # github.com/openshift/machine-api-operator => github.com/openshift-powervs/machine-api-operator v0.2.1-0.20210809115935-a9fd8f5d2767
