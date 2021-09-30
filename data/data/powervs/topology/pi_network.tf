@@ -15,8 +15,8 @@
 
 #resource "ibm_pi_network" "ocp_network" {
 #  provider             = ibm.powervs
-#  count                = var.powervs_network_id == "" ? 1 : 0
-#  pi_network_name      = "pvs_net_${var.cluster_id}"
+#  count                = var.powervs_network_name == "" ? 1 : 0
+#  pi_network_name      = "pvs-net-${var.cluster_id}"
 #  pi_cloud_instance_id = "powervs_cloud_instance_id"
 #  pi_network_type      = "dhcp"
 #  pi_cidr              = "192.168.0.0/24"

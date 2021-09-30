@@ -31,14 +31,15 @@ func Machines(clusterID string, config *types.InstallConfig, pool *types.Machine
 	} else {
 		mpool.KeyPairName = fmt.Sprintf("%s-key", clusterID)
 	}
-	if platform.PVSNetworkID != "" {
-		mpool.NetworkIDs = append([]string{platform.PVSNetworkID})
-	}
 	if platform.ClusterOSImage != "" {
-		mpool.ImageID = platform.ClusterOSImage
+		mpool.ImageName = platform.ClusterOSImage
+	} else {
+		mpool.ImageName = fmt.Sprintf("rhcos-%s", clusterID)
 	}
-	if mpool.ImageID == "" {
-		mpool.ImageID = fmt.Sprintf("rhcos-%s", clusterID)
+	if platform.PVSNetworkName != "" {
+		mpool.NetworkIDs = []string{platform.PVSNetworkName}
+	} else {
+		mpool.NetworkIDs = []string{fmt.Sprintf("pvs-net-%s", clusterID)}
 	}
 
 	total := int64(1)
@@ -86,15 +87,15 @@ func provider(clusterID string, platform *powervs.Platform, mpool *powervs.Machi
 		},
 		ObjectMeta:        metav1.ObjectMeta{},
 		ServiceInstanceID: platform.ServiceInstanceID,
-		ImageID:           mpool.ImageID,
+		Image:             powervsprovider.PowerVSResourceReference{Name: &mpool.ImageName},
 		UserDataSecret:    &corev1.LocalObjectReference{Name: userDataSecret},
 		CredentialsSecret: &corev1.LocalObjectReference{Name: "powervs-credentials"},
 		SysType:           mpool.SysType,
 		ProcType:          mpool.ProcType,
 		Processors:        fmt.Sprintf("%f", mpool.Processors),
 		Memory:            fmt.Sprintf("%d", mpool.Memory),
-		NetworkIDs:        mpool.NetworkIDs,
-		KeyPairName:       &mpool.KeyPairName,
+		Network:           powervsprovider.PowerVSResourceReference{Name: &mpool.NetworkIDs[0]},
+		KeyPairName:       mpool.KeyPairName,
 	}
 	return config, nil
 }

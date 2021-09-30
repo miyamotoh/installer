@@ -30,21 +30,20 @@ func IsKnownRegion(region string) bool {
 	return false
 }
 
-// Todo(cklokman): Need some form of error handing in this function...
 func knownZones(region string) []string {
-	return rhcos.PowerVSZones[region].Zones
+	if _, ok := rhcos.PowerVSRegions[region]; ok {
+		return rhcos.PowerVSRegions[region].Zones
+	}
+	return []string{}
 }
 
-// IsKnownZone return true is a specified zone is Known to the installer.
+// IsKnownZone return true is a specified zone is known to the installer.
 func IsKnownZone(region string, zone string) bool {
-	if _, ok := knownRegions()[region]; ok {
-		zones := knownZones(region)
-		for _, z := range zones {
-			if z == zone {
-				return true
-			}
+	zones := knownZones(region)
+	for _, z := range zones {
+		if z == zone {
+			return true
 		}
-		return false
 	}
 	return false
 }

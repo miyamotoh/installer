@@ -16,6 +16,7 @@ type MachinePool struct {
 
 	// VolumeIDs is the list of volumes attached to the instance.
 	//
+	// +optional
 	VolumeIDs []string `json:"volumeIDs"`
 
 	// Memory defines the memory in GB for the instance.
@@ -31,14 +32,12 @@ type MachinePool struct {
 	// +optional
 	ProcType string `json:"procType"`
 
-	// ImageID defines the ImageID for the instance.
+	// ImageName defines the boot image name for the instance.
 	//
-	// +optional (does this mean user-optional, or completely?)
-	ImageID string `json:"imageID"`
+	ImageName string `json:"imageName"`
 
 	// NetworkIDs defines the network IDs of the instance.
 	//
-	// +optional
 	NetworkIDs []string `json:"networkIDs"`
 
 	// SysType defines the system type for instance.
@@ -52,8 +51,8 @@ func (a *MachinePool) Set(required *MachinePool) {
 	if required == nil || a == nil {
 		return
 	}
-	if required.ImageID != "" {
-		a.ImageID = required.ImageID
+	if required.ImageName != "" {
+		a.ImageName = required.ImageName
 	}
 	if required.ServiceInstance != "" {
 		a.ServiceInstance = required.ServiceInstance

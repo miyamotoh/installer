@@ -31,14 +31,15 @@ func MachineSets(clusterID string, config *types.InstallConfig, pool *types.Mach
 	} else {
 		mpool.KeyPairName = fmt.Sprintf("%s-key", clusterID)
 	}
-	if platform.PVSNetworkID != "" {
-		mpool.NetworkIDs = append([]string{platform.PVSNetworkID})
-	}
 	if platform.ClusterOSImage != "" {
-		mpool.ImageID = platform.ClusterOSImage
+		mpool.ImageName = platform.ClusterOSImage
+	} else {
+		mpool.ImageName = fmt.Sprintf("rhcos-%s", clusterID)
 	}
-	if mpool.ImageID == "" {
-		mpool.ImageID = fmt.Sprintf("rhcos-%s", clusterID)
+	if platform.PVSNetworkName != "" {
+		mpool.NetworkIDs = []string{platform.PVSNetworkName}
+	} else {
+		mpool.NetworkIDs = []string{fmt.Sprintf("pvs-net-%s", clusterID)}
 	}
 
 	total := int32(0)

@@ -54,42 +54,23 @@ type Platform struct {
 	// @TODO: make this +optional when we have TF support
 	PVSNetworkName string `json:pvsNetworkName,omitempty"`
 
-	// PVSNetworkID is the associated ID for the PVSNetworkName. This is currently required
-	// For the machine config.
-	// @TODO: Remove when machine config resolves the ID from name.
-	// Leave unset to have the installer create the network.
-	//
-	// @TODO: make this +optional when we have TF support
-	PVSNetworkID string `json:"pvsNetworkID,omitempty"`
-
 	// UserTags additional keys and values that the installer will add
 	// as tags to all resources that it creates. Resources created by the
 	// cluster itself may not include these tags.
 	// +optional
 	UserTags map[string]string `json:"userTags,omitempty"`
 
-	// ImageName is equivalent to BootStrap/ClusterOSImage.
-	// Until the machine provider config in cluster-api-provider-powervs
-	// takes an ID instead of a name, we're using this for TF Creation,
-	// and the other two for machine-config.
+	// BootstrapOSImage is a pre-created boot image to override the default
+	// OS image for the bootstrap node.
 	//
-	// @TODO: Remove when provider resolves ID from name
-	// @TODO: make this +optional when we have TF support
-	ImageName string `json:"imageName,omitempty"`
-
-	// BootstrapOSImage is a URL to override the default OS image
-	// for the bootstrap node. The URL must contain a sha256 hash of the image
-	// e.g https://mirror.example.com/images/image.ova.gz?sha256=a07bd...
-	//
-	// @TODO: make this +optional when we have TF support
+	// +optional
 	BootstrapOSImage string `json:"bootstrapOSImage,omitempty"`
 
-	// ClusterOSImage is a URL to override the default OS image
-	// for cluster nodes. The URL must contain a sha256 hash of the image
-	// e.g https://mirror.example.com/images/powervs.ova.gz?sha256=3b5a8...
+	// ClusterOSImage is a pre-created Power VS boot image that overrides the
+	// default image for cluster nodes.
 	//
-	// @TODO: make this +optional when we have TF support
-	ClusterOSImage string `json:"clusterOSImage,omitempty"`
+	// @TODO: make this +optional, add omitempty when we have TF support
+	ClusterOSImage string `json:"clusterOSImage"`
 
 	// DefaultMachinePlatform is the default configuration used when
 	// installing on Power VS for machine pools which do not define their own

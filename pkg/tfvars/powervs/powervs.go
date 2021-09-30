@@ -18,13 +18,12 @@ type config struct {
 	PowerVSRegion        string `json:"powervs_region"`
 	PowerVSZone          string `json:"powervs_zone"`
 	VPCRegion            string `json:"powervs_vpc_region"`
-	VPCZone              string `json:"powervs_vpx_zone"`
+	VPCZone              string `json:"powervs_vpc_zone"`
 	PowerVSResourceGroup string `json:"powervs_resource_group"`
 	CISInstanceCRN       string `json:"powervs_cis_crn"`
 	ImageName            string `json:"powervs_image_name"`
 	ImageID              string `json:"powervs_image_id"`
 	NetworkName          string `json:"powervs_network_name"`
-	NetworkIDs           string `json:"powervs_network_id"`
 	VPCName              string `json:"powervs_vpc_name"`
 	VPCSubnetName        string `json:"powervs_vpc_subnet_name"`
 	BootstrapMemory      string `json:"powervs_bootstrap_memory"`
@@ -43,7 +42,6 @@ type TFVarsSources struct {
 	Region               string
 	Zone                 string
 	NetworkName          string
-	ImageName            string
 	PowerVSResourceGroup string
 	VPCZone              string
 	CISInstanceCRN       string
@@ -69,19 +67,14 @@ func TFVars(sources TFVarsSources) ([]byte, error) {
 		ServiceInstanceID:    masterConfig.ServiceInstanceID,
 		APIKey:               sources.APIKey,
 		SSHKey:               sources.SSHKey,
-		PowerVSRegion:        masterConfig.Region,
-		PowerVSZone:          sources.PowerVSZone,
-		VPCRegion:            powervsRegionToIBMRegion[masterConfig.Region],
 		PowerVSRegion:        sources.Region,
 		PowerVSZone:          sources.Zone,
 		VPCRegion:            vpcRegion,
 		VPCZone:              vpcZone,
 		PowerVSResourceGroup: sources.PowerVSResourceGroup,
 		CISInstanceCRN:       sources.CISInstanceCRN,
-		ImageName:            sources.ImageName,
-		ImageID:              masterConfig.ImageID,
-		NetworkName:          sources.NetworkName,
-		NetworkIDs:           masterConfig.NetworkIDs[0],
+		ImageName:            *masterConfig.Image.Name,
+		NetworkName:          *masterConfig.Network.Name,
 		VPCName:              sources.VPCName,
 		VPCSubnetName:        sources.VPCSubnetName,
 		BootstrapMemory:      masterConfig.Memory,

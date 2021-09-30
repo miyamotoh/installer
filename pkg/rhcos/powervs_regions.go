@@ -1,8 +1,10 @@
 package rhcos
 
-// TODO(cklokman): This entire file should be programatically generated similar to aws
+// Since there is no API to query these, we have to hard-code them here.
 
-// PowerVSRegion describes resources associated with a region in powervs.
+// PowerVSRegion describes resources associated with a region in Power VS.
+// We're using a few items from the IBM Cloud VPC offering. The region names
+// for VPC are different so another function of this is to correlate those.
 type PowerVSRegion struct {
 	Name        string
 	Description string
@@ -72,4 +74,12 @@ var PowerVSRegions = map[string]PowerVSRegion{
 		VPCRegion:   "us-east",
 		Zones:       []string{"us-east"},
 	},
+}
+
+func PowerVSZones() []string {
+	var zones []string
+	for _, r := range PowerVSRegions {
+		zones = append(zones, r.Zones...)
+	}
+	return zones
 }
