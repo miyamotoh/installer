@@ -217,7 +217,7 @@ func TestPowerVSMaster(t *testing.T) {
 					Platform: types.MachinePoolPlatform{
 						PowerVS: &powervstypes.MachinePool{
 							ServiceInstance: "dummy-service-instance",
-							ImageID:         "dummy-image-id",
+							ImageName:       "dummy-image",
 							NetworkIDs:      []string{"dummy-network"},
 							KeyPairName:     "dummy-keypair",
 						},

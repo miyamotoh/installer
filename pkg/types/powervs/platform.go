@@ -52,7 +52,7 @@ type Platform struct {
 
 	// PVSNetworkName specifies an existing network within the Power VS Service Instance.
 	// @TODO: make this +optional when we have TF support
-	PVSNetworkName string `json:pvsNetworkName,omitempty"`
+	PVSNetworkName string `json:"pvsNetworkName,omitempty"`
 
 	// UserTags additional keys and values that the installer will add
 	// as tags to all resources that it creates. Resources created by the

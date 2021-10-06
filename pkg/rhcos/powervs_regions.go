@@ -14,13 +14,13 @@ type PowerVSRegion struct {
 
 // PowerVSRegions holds the regions for IBM Power VS, and descriptions used during the survey
 var PowerVSRegions = map[string]PowerVSRegion{
-	"dal": PowerVSRegion{
+	"dal": {
 		Name:        "dal",
 		Description: "Dallas, USA",
 		VPCRegion:   "us-south",
 		Zones:       []string{"dal12"},
 	},
-	"eu-de": PowerVSRegion{
+	"eu-de": {
 		Name:        "eu-de",
 		Description: "Frankfurt, Germany",
 		VPCRegion:   "eu-de",
@@ -29,7 +29,7 @@ var PowerVSRegions = map[string]PowerVSRegion{
 			"eu-de-2",
 		},
 	},
-	"lon": PowerVSRegion{
+	"lon": {
 		Name:        "lon",
 		Description: "London, UK.",
 		VPCRegion:   "eu-gb",
@@ -38,37 +38,37 @@ var PowerVSRegions = map[string]PowerVSRegion{
 			"lon06",
 		},
 	},
-	"osa": PowerVSRegion{
+	"osa": {
 		Name:        "osa",
 		Description: "Osaka, Japan",
 		VPCRegion:   "jp-osa",
 		Zones:       []string{"osa21"},
 	},
-	"syd": PowerVSRegion{
+	"syd": {
 		Name:        "syd",
 		Description: "Sydney, Australia",
 		VPCRegion:   "au-syd",
 		Zones:       []string{"syd04"},
 	},
-	"sao": PowerVSRegion{
+	"sao": {
 		Name:        "sao",
 		Description: "São Paulo, Brazil",
 		VPCRegion:   "br-sao",
 		Zones:       []string{"sao01"},
 	},
-	"tor": PowerVSRegion{
+	"tor": {
 		Name:        "tor",
 		Description: "Toronto, Canada",
 		VPCRegion:   "ca-tor",
 		Zones:       []string{"tor01"},
 	},
-	"tok": PowerVSRegion{
+	"tok": {
 		Name:        "tok",
 		Description: "Tokyo, Japan",
 		VPCRegion:   "jp-tok",
 		Zones:       []string{"tok04"},
 	},
-	"us-east": PowerVSRegion{
+	"us-east": {
 		Name:        "us-east",
 		Description: "Washington DC, USA",
 		VPCRegion:   "us-east",
@@ -76,6 +76,7 @@ var PowerVSRegions = map[string]PowerVSRegion{
 	},
 }
 
+// PowerVSZones retrieves a slice of all zones in Power VS
 func PowerVSZones() []string {
 	var zones []string
 	for _, r := range PowerVSRegions {

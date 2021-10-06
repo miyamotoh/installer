@@ -69,7 +69,7 @@ func getPISession() (*ibmpisession.IBMPISession, error) {
 			},
 		}, &id)
 		if err != nil {
-			return nil, errors.New("Error saving the IBM Cloud User ID")
+			return nil, errors.New("error saving the IBM Cloud User ID")
 		}
 	}
 
@@ -87,7 +87,7 @@ func getPISession() (*ibmpisession.IBMPISession, error) {
 			},
 		}, &apikey)
 		if err != nil {
-			return nil, errors.New("Error saving the API Key")
+			return nil, errors.New("error saving the API Key")
 		}
 	}
 	os.Setenv("IC_API_KEY", apikey)
