@@ -15,7 +15,7 @@ import (
 )
 
 // MachineSets returns a list of machinesets for a machinepool.
-func MachineSets(clusterID string, config *types.InstallConfig, pool *types.MachinePool, role, userDataSecret string, userTags map[string]string) ([]*machineapi.MachineSet, error) {
+func MachineSets(clusterID string, config *types.InstallConfig, pool *types.MachinePool, role, userDataSecret string) ([]*machineapi.MachineSet, error) {
 	if configPlatform := config.Platform.Name(); configPlatform != powervs.Name {
 		return nil, fmt.Errorf("non-powerVS configuration: %q", configPlatform)
 	}
@@ -23,23 +23,22 @@ func MachineSets(clusterID string, config *types.InstallConfig, pool *types.Mach
 		return nil, fmt.Errorf("non-powerVS machine-pool: %q", poolPlatform)
 	}
 
+	var (
+		image, network string
+	)
+
 	platform := config.Platform.PowerVS
 	mpool := pool.Platform.PowerVS
 
-	if platform.SSHKeyName != "" {
-		mpool.KeyPairName = platform.SSHKeyName
-	} else {
-		mpool.KeyPairName = fmt.Sprintf("%s-key", clusterID)
-	}
 	if platform.ClusterOSImage != "" {
-		mpool.ImageName = platform.ClusterOSImage
+		image = platform.ClusterOSImage
 	} else {
-		mpool.ImageName = fmt.Sprintf("rhcos-%s", clusterID)
+		image = fmt.Sprintf("rhcos-%s", clusterID)
 	}
 	if platform.PVSNetworkName != "" {
-		mpool.NetworkIDs = []string{platform.PVSNetworkName}
+		network = platform.PVSNetworkName
 	} else {
-		mpool.NetworkIDs = []string{fmt.Sprintf("pvs-net-%s", clusterID)}
+		network = fmt.Sprintf("pvs-net-%s", clusterID)
 	}
 
 	total := int32(0)
@@ -47,7 +46,7 @@ func MachineSets(clusterID string, config *types.InstallConfig, pool *types.Mach
 		total = int32(*pool.Replicas)
 	}
 	var machinesets []*machineapi.MachineSet
-	provider, err := provider(clusterID, platform, mpool, userDataSecret, userTags)
+	provider, err := provider(clusterID, platform, mpool, userDataSecret, image, network)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create provider")
 	}
