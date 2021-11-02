@@ -12,12 +12,7 @@ require (
 	github.com/Azure/go-autorest/autorest/to v0.4.0
 	github.com/Azure/go-ntlmssp v0.0.0-20191115210519-2b2be6cc8ed4 // indirect
 	github.com/ChrisTrenkamp/goxpath v0.0.0-20190607011252-c5096ec8773d // indirect
-	github.com/IBM-Cloud/bluemix-go v0.0.0-20210611051827-cdc80c935c05
-	github.com/IBM-Cloud/terraform-provider-ibm v1.26.2
-	github.com/IBM/go-sdk-core/v5 v5.4.3
-	github.com/IBM/networking-go-sdk v0.14.0
-	github.com/IBM/platform-services-go-sdk v0.18.16
-	github.com/IBM/vpc-go-sdk v1.0.1
+	github.com/IBM-Cloud/power-go-client v1.0.56
 	github.com/Netflix/go-expect v0.0.0-20190729225929-0e00d9168667 // indirect
 	github.com/antchfx/xpath v1.1.2 // indirect
 	github.com/apparentlymart/go-cidr v1.1.0

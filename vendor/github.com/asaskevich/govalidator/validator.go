@@ -266,7 +266,7 @@ func IsLowerCase(str string) bool {
 	return str == strings.ToLower(str)
 }
 
-// IsUpperCase checks if the string is uppercase. Empty string is valid.
+	// IsUpperCase checks if the string is uppercase. Empty string is valid.
 func IsUpperCase(str string) bool {
 	if IsNull(str) {
 		return true

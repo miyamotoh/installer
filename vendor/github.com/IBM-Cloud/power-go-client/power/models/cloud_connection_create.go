@@ -6,6 +6,8 @@ package models
 // Editing this file might prove futile when you re-run the swagger generate command
 
 import (
+	"encoding/json"
+
 	strfmt "github.com/go-openapi/strfmt"
 
 	"github.com/go-openapi/errors"
@@ -32,6 +34,7 @@ type CloudConnectionCreate struct {
 
 	// speed of the cloud connection (speed in megabits per second)
 	// Required: true
+	// Enum: [50 100 200 500 1000 2000 5000 10000]
 	Speed *int64 `json:"speed"`
 
 	// vpc
