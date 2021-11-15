@@ -5,3 +5,7 @@ output "powervs_lb_hostname" {
 output "powervs_lb_int_hostname" {
   value = ibm_is_lb.load_balancer_int.hostname
 }
+
+output "bootstrap_ip" {
+  value = ibm_is_lb.load_balancer.hostname
+}
