@@ -15,13 +15,6 @@ resource "time_sleep" "wait_for_vpc" {
   create_duration = var.wait_for_vpc
 }
 
-resource "ibm_is_public_gateway" "dns_vm_gateway" {
-  count = data.ibm_is_subnet.ocp_vpc_subnet.public_gateway == "" ? 1 : 0
-  name  = "${var.cluster_id}-gateway"
-  vpc   = data.ibm_is_vpc.ocp_vpc.id
-  zone  = data.ibm_is_subnet.ocp_vpc_subnet.zone
-}
-
 resource "ibm_is_subnet" "new_vpc_subnet" {
   count                    = var.vpc_subnet_name == "" ? 1 : 0
   depends_on               = [time_sleep.wait_for_vpc]
@@ -31,12 +24,6 @@ resource "ibm_is_subnet" "new_vpc_subnet" {
   total_ipv4_address_count = 256
   zone                     = var.vpc_zone
   tags                     = [var.cluster_id]
-}
-
-resource "ibm_is_subnet_public_gateway_attachment" "subnet_public_gateway_attachment" {
-  count          = data.ibm_is_subnet.ocp_vpc_subnet.public_gateway == "" ? 1 : 0
-  subnet         = data.ibm_is_subnet.ocp_vpc_subnet.id
-  public_gateway = ibm_is_public_gateway.dns_vm_gateway[0].id
 }
 
 data "ibm_is_vpc" "ocp_vpc" {

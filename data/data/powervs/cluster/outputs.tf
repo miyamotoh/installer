@@ -45,3 +45,15 @@ output "proxy_server_ip" {
 output "vpc_id" {
   value = module.vpc.vpc_id
 }
+
+output "vpc_zone" {
+  value = module.vpc.vpc_zone
+}
+
+output "vpc_subnet_id" {
+  value = module.vpc.vpc_subnet_id
+}
+
+output "gateway_attached" {
+  value = module.vpc.gateway_attached
+}

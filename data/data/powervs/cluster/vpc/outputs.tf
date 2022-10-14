@@ -13,3 +13,7 @@ output "vpc_zone" {
 output "vpc_crn" {
   value = data.ibm_is_vpc.ocp_vpc.crn
 }
+
+output "gateway_attached" {
+  value = data.ibm_is_subnet.ocp_vpc_subnet.public_gateway != ""
+}

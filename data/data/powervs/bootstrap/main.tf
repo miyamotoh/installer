@@ -51,3 +51,15 @@ module "lb" {
   api_pool_ext_id     = var.api_pool_ext_id
 }
 
+module "gw" {
+  providers = {
+    ibm = ibm.vpc
+  }
+  source = "./gw"
+
+  cluster_id       = var.cluster_id
+  vpc_id           = var.vpc_id
+  vpc_zone         = var.vpc_zone
+  vpc_subnet_id    = var.vpc_subnet_id
+  gateway_attached = var.gateway_attached
+}
