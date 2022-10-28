@@ -837,6 +837,8 @@ func (t *TerraformVariables) Generate(parents asset.Parents) error {
 				ImageBucketName:      osImage[0],
 				ImageBucketFileName:  osImage[1],
 				NetworkName:          installConfig.Config.PowerVS.PVSNetworkName,
+				VPCRegion:            installConfig.Config.PowerVS.VPCRegion,
+				VPCZone:              installConfig.Config.PowerVS.VPCZone,
 				VPCName:              installConfig.Config.PowerVS.VPCName,
 				VPCSubnetName:        vpcSubnet,
 				VPCPermitted:         vpcPermitted,
