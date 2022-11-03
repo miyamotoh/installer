@@ -228,6 +228,13 @@ func (a *InstallConfig) platformValidation() error {
 		}
 		return icibmcloud.Validate(client, a.Config)
 	}
+	if a.Config.Platform.PowerVS != nil {
+		client, err := icpowervs.NewClient()
+		if err != nil {
+			return err
+		}
+		return icpowervs.Validate(client, a.Config)
+	}
 	if a.Config.Platform.AWS != nil {
 		return aws.Validate(context.TODO(), a.AWS, a.Config)
 	}
@@ -239,9 +246,6 @@ func (a *InstallConfig) platformValidation() error {
 	}
 	if a.Config.Platform.OpenStack != nil {
 		return icopenstack.Validate(a.Config)
-	}
-	if a.Config.Platform.PowerVS != nil {
-		return icpowervs.Validate(a.Config)
 	}
 	if a.Config.Platform.Nutanix != nil {
 		return icnutanix.Validate(a.Config)

@@ -834,11 +834,6 @@ func (t *TerraformVariables) Generate(parents asset.Parents) error {
 			return err
 		}
 
-		var vpcSubnet string
-		if len(installConfig.Config.PowerVS.VPCSubnets) > 0 {
-			vpcSubnet = installConfig.Config.PowerVS.VPCSubnets[0]
-		}
-
 		osImage := strings.SplitN(string(*rhcosImage), "/", 2)
 		data, err = powervstfvars.TFVars(
 			powervstfvars.TFVarsSources{
