@@ -223,3 +223,4 @@ variable "powervs_service_instance_crn" {
 ################################################################
 variable "bootstrap_ip" { default = "" }
 variable "control_plane_ips" { default = [] }
+variable "cloud_instance_id" { default = "" }

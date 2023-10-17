@@ -23,8 +23,13 @@ func MachineSets(clusterID string, config *types.InstallConfig, pool *types.Mach
 
 	platform := config.Platform.PowerVS
 	mpool := pool.Platform.PowerVS
-	var network string
+	var network, serviceInstanceName string
 	image := fmt.Sprintf("rhcos-%s", clusterID)
+	if platform.ServiceInstanceName != "" && platform.ServiceInstanceID == "" {
+		serviceInstanceName = fmt.Sprintf("%s-power-iaas", clusterID)
+	} else if platform.ServiceInstanceName != "" && platform.ServiceInstanceID != "" {
+		return nil, fmt.Errorf("service instance id and name must not be specified together")
+	}
 	if platform.PVSNetworkName != "" {
 		network = platform.PVSNetworkName
 	}
@@ -34,7 +39,7 @@ func MachineSets(clusterID string, config *types.InstallConfig, pool *types.Mach
 		total = int32(*pool.Replicas)
 	}
 	var machinesets []*machineapi.MachineSet
-	provider, err := provider(clusterID, platform, mpool, userDataSecret, image, network)
+	provider, err := provider(clusterID, platform, mpool, userDataSecret, image, network, serviceInstanceName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create provider: %w", err)
 	}

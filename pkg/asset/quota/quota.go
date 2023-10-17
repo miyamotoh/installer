@@ -160,20 +160,22 @@ func (a *PlatformQuotaCheck) Generate(dependencies asset.Parents) error {
 
 		transitGatewayEnabled := configpowervs.TransitGatewayEnabledZone(ic.Config.Platform.PowerVS.Zone)
 
-		if !transitGatewayEnabled {
+		if !transitGatewayEnabled && ic.Config.Platform.PowerVS.ServiceInstanceID != "" {
 			err = bxCli.ValidateCloudConnectionInPowerVSRegion(context.TODO(), ic.Config.Platform.PowerVS.ServiceInstanceID)
 			if err != nil {
 				return fmt.Errorf("failed to meet the prerequisite for Cloud Connections: %w", err)
 			}
 		}
 
-		err = bxCli.ValidateCapacity(context.TODO(), masters, workers, ic.Config.Platform.PowerVS.ServiceInstanceID)
-		if err != nil {
-			return err
+		if ic.Config.Platform.PowerVS.ServiceInstanceID != "" {
+			err = bxCli.ValidateCapacity(context.TODO(), masters, workers, ic.Config.Platform.PowerVS.ServiceInstanceID)
+			if err != nil {
+				return err
+			}
 		}
 
 		if !transitGatewayEnabled {
-			if ic.Config.Platform.PowerVS.PVSNetworkName == "" {
+			if ic.Config.Platform.PowerVS.PVSNetworkName == "" && ic.Config.Platform.PowerVS.ServiceInstanceID != "" {
 				err = bxCli.ValidateDhcpService(context.TODO(), ic.Config.Platform.PowerVS.ServiceInstanceID, ic.Config.MachineNetwork)
 				if err != nil {
 					return fmt.Errorf("failed to meet the prerequisite of one DHCP service per Power VS instance: %w", err)

@@ -84,7 +84,7 @@ func TFVars(sources TFVarsSources) ([]byte, error) {
 	if masterConfig.ServiceInstance.ID != nil {
 		serviceInstanceID = *masterConfig.ServiceInstance.ID
 	} else {
-		return nil, fmt.Errorf("serviceInstanceID is nil")
+		serviceInstanceID = ""
 	}
 
 	if masterConfig.Processors.StrVal != "" {
