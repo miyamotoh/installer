@@ -67,13 +67,13 @@ type API interface {
 	// Service Instance
 	ListServiceInstances(ctx context.Context) ([]string, error)
 	ServiceInstanceGUIDToName(ctx context.Context, id string) (string, error)
-
 	// Security Group
 	ListSecurityGroupRules(ctx context.Context, securityGroupID string) (*vpcv1.SecurityGroupRuleCollection, error)
 	AddSecurityGroupRule(ctx context.Context, securityGroupID string, rule *vpcv1.SecurityGroupRulePrototype) error
 
 	// SSH
 	CreateSSHKey(ctx context.Context, serviceInstance string, zone string, sshKeyName string, sshKey string) error
+	GetVPCSubnets(ctx context.Context, vpcID string) ([]vpcv1.Subnet, error)
 }
 
 // Client makes calls to the PowerVS API.
@@ -1093,4 +1093,21 @@ func (c *Client) CreateSSHKey(ctx context.Context, serviceInstance string, zone 
 	}
 
 	return nil
+
+// GetVPCSubnets retrieves all subnets in the given VPC.
+func (c *Client) GetVPCSubnets(ctx context.Context, vpcID string) ([]vpcv1.Subnet, error) {
+	ctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancel()
+
+	listSubnetsOptions := c.vpcAPI.NewListSubnetsOptions()
+	listSubnetsOptions.VPCID = &vpcID
+	subnets, _, err := c.vpcAPI.ListSubnets(listSubnetsOptions)
+	if err != nil {
+		return nil, err
+	}
+
+	result := []vpcv1.Subnet{}
+	result = append(result, subnets.Subnets...)
+
+	return result, nil
 }
