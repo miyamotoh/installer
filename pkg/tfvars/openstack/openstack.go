@@ -2,227 +2,242 @@
 package openstack
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
-	"path/filepath"
 
-	"github.com/gophercloud/gophercloud"
-	"github.com/gophercloud/gophercloud/openstack"
-	"github.com/gophercloud/gophercloud/openstack/identity/v3/tokens"
-	"github.com/gophercloud/gophercloud/openstack/networking/v2/subnets"
-	"github.com/gophercloud/utils/openstack/clientconfig"
+	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack"
+	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/tokens"
+
+	configv1 "github.com/openshift/api/config/v1"
+	machinev1alpha1 "github.com/openshift/api/machine/v1alpha1"
+	"github.com/openshift/installer/pkg/asset/installconfig"
+	"github.com/openshift/installer/pkg/asset/machines"
 	"github.com/openshift/installer/pkg/rhcos"
-	"github.com/openshift/installer/pkg/tfvars/internal/cache"
-	"github.com/openshift/installer/pkg/types"
 	types_openstack "github.com/openshift/installer/pkg/types/openstack"
 	openstackdefaults "github.com/openshift/installer/pkg/types/openstack/defaults"
-	"github.com/pkg/errors"
-
-	"sigs.k8s.io/cluster-api-provider-openstack/pkg/apis/openstackproviderconfig/v1alpha1"
 )
 
-type config struct {
-	BaseImageName                    string                            `json:"openstack_base_image_name,omitempty"`
-	ExternalNetwork                  string                            `json:"openstack_external_network,omitempty"`
-	Cloud                            string                            `json:"openstack_credentials_cloud,omitempty"`
-	FlavorName                       string                            `json:"openstack_master_flavor_name,omitempty"`
-	APIFloatingIP                    string                            `json:"openstack_api_floating_ip,omitempty"`
-	IngressFloatingIP                string                            `json:"openstack_ingress_floating_ip,omitempty"`
-	APIVIP                           string                            `json:"openstack_api_int_ip,omitempty"`
-	IngressVIP                       string                            `json:"openstack_ingress_ip,omitempty"`
-	TrunkSupport                     bool                              `json:"openstack_trunk_support,omitempty"`
-	OctaviaSupport                   bool                              `json:"openstack_octavia_support,omitempty"`
-	RootVolumeSize                   int                               `json:"openstack_master_root_volume_size,omitempty"`
-	RootVolumeType                   string                            `json:"openstack_master_root_volume_type,omitempty"`
-	BootstrapShim                    string                            `json:"openstack_bootstrap_shim_ignition,omitempty"`
-	ExternalDNS                      []string                          `json:"openstack_external_dns,omitempty"`
-	MasterServerGroupName            string                            `json:"openstack_master_server_group_name,omitempty"`
-	MasterServerGroupPolicy          types_openstack.ServerGroupPolicy `json:"openstack_master_server_group_policy"`
-	AdditionalNetworkIDs             []string                          `json:"openstack_additional_network_ids,omitempty"`
-	AdditionalSecurityGroupIDs       []string                          `json:"openstack_master_extra_sg_ids,omitempty"`
-	MachinesSubnet                   string                            `json:"openstack_machines_subnet_id,omitempty"`
-	MachinesNetwork                  string                            `json:"openstack_machines_network_id,omitempty"`
-	MasterAvailabilityZones          []string                          `json:"openstack_master_availability_zones,omitempty"`
-	MasterRootVolumeAvalabilityZones []string                          `json:"openstack_master_root_volume_availability_zones,omitempty"`
-}
-
 // TFVars generates OpenStack-specific Terraform variables.
-func TFVars(masterConfigs []*v1alpha1.OpenstackProviderSpec, cloud string, externalNetwork string, externalDNS []string, apiFloatingIP string, ingressFloatingIP string, apiVIP string, ingressVIP string, baseImage string, baseImageProperties map[string]string, infraID string, userCA string, bootstrapIgn string, mpool, defaultmpool *types_openstack.MachinePool, machinesSubnet string, proxy *types.Proxy) ([]byte, error) {
-	zones := []string{}
-	seen := map[string]bool{}
-	for _, config := range masterConfigs {
-		if !seen[config.AvailabilityZone] {
-			zones = append(zones, config.AvailabilityZone)
-			seen[config.AvailabilityZone] = true
-		}
-	}
+func TFVars(
+	ctx context.Context,
+	installConfig *installconfig.InstallConfig,
+	mastersAsset *machines.Master,
+	workersAsset *machines.Worker,
+	baseImage string,
+	clusterID *installconfig.ClusterID,
+	bootstrapIgn string,
+) ([]byte, error) {
+	var (
+		cloud        = installConfig.Config.Platform.OpenStack.Cloud
+		mastermpool  = installConfig.Config.ControlPlane.Platform.OpenStack
+		defaultmpool = installConfig.Config.OpenStack.DefaultMachinePlatform
+	)
 
-	cfg := &config{
-		ExternalNetwork:         externalNetwork,
-		Cloud:                   cloud,
-		FlavorName:              masterConfigs[0].Flavor,
-		APIFloatingIP:           apiFloatingIP,
-		IngressFloatingIP:       ingressFloatingIP,
-		APIVIP:                  apiVIP,
-		IngressVIP:              ingressVIP,
-		ExternalDNS:             externalDNS,
-		MachinesSubnet:          machinesSubnet,
-		MasterAvailabilityZones: zones,
-	}
-
-	if defaultmpool != nil && defaultmpool.RootVolume != nil {
-		cfg.MasterRootVolumeAvalabilityZones = defaultmpool.RootVolume.Zones
-	}
-	if mpool != nil && mpool.RootVolume != nil && mpool.RootVolume.Zones != nil {
-		cfg.MasterRootVolumeAvalabilityZones = mpool.RootVolume.Zones
-	}
-
-	serviceCatalog, err := getServiceCatalog(cloud)
+	conn, err := openstackdefaults.NewServiceClient(ctx, "network", openstackdefaults.DefaultClientOpts(cloud))
 	if err != nil {
-		return nil, errors.Errorf("Could not retrieve service catalog: %v", err)
+		return nil, fmt.Errorf("failed to build an OpenStack service client: %w", err)
 	}
 
-	// Normally baseImage contains a URL that we will use to create a new Glance image, but for testing
-	// purposes we also allow to set a custom Glance image name to skip the uploading. Here we check
-	// whether baseImage is a URL or not. If this is the first case, it means that the image should be
-	// created by the installer from the URL. Otherwise, it means that we are given the name of the pre-created
-	// Glance image, which we should use for instances.
-	imageName, isURL := rhcos.GenerateOpenStackImageName(baseImage, infraID)
-	cfg.BaseImageName = imageName
-	if isURL {
-		// Valid URL -> use baseImage as a URL that will be used to create new Glance image with name "<infraID>-rhcos".
-		var localFilePath string
-
-		url, err := url.Parse(baseImage)
+	var masterSpecs []*machinev1alpha1.OpenstackProviderSpec
+	{
+		masters, err := mastersAsset.Machines()
 		if err != nil {
 			return nil, err
 		}
 
-		// We support 'http(s)' and 'file' schemes. If the scheme is http(s), then we will upload a file from that
-		// location. Otherwise will take local file path from the URL.
-		switch url.Scheme {
-		case "http", "https":
-			localFilePath, err = cache.DownloadImageFile(baseImage)
-			if err != nil {
-				return nil, err
+		for _, master := range masters {
+			masterSpecs = append(masterSpecs, master.Spec.ProviderSpec.Value.Object.(*machinev1alpha1.OpenstackProviderSpec))
+		}
+	}
+
+	var workerSpecs []*machinev1alpha1.OpenstackProviderSpec
+	{
+		workers, err := workersAsset.MachineSets()
+		if err != nil {
+			return nil, err
+		}
+
+		for _, worker := range workers {
+			workerSpecs = append(workerSpecs, worker.Spec.Template.Spec.ProviderSpec.Value.Object.(*machinev1alpha1.OpenstackProviderSpec))
+		}
+	}
+
+	var workermpool *types_openstack.MachinePool
+	if len(installConfig.Config.Compute) > 0 {
+		// Only considering the first Compute machinepool here, because
+		// the current Installer implementation allows for one only.
+		//
+		// This validation code[1] errors if the pool is not named
+		// "worker", and also errors in case of duplicate names,
+		// factually rendering impossible to have two machinepools in
+		// the install-config YAML array.
+		//
+		// [1]: https://github.com/openshift/installer/blob/252facf5e6e1238ee60b5f78607214e8691a3eab/pkg/types/validation/installconfig.go#L404-L410
+		if len(installConfig.Config.Compute) > 1 {
+			panic("Multiple machine-pools are currently not supported by the OpenShift installer on OpenStack platform")
+		}
+		workermpool = installConfig.Config.Compute[0].Platform.OpenStack
+	}
+
+	var userManagedLoadBalancer bool
+	if lb := installConfig.Config.Platform.OpenStack.LoadBalancer; lb != nil && lb.Type == configv1.LoadBalancerTypeUserManaged {
+		userManagedLoadBalancer = true
+	}
+
+	// computeAvailabilityZones is a slice where each index targets a master.
+	computeAvailabilityZones := make([]string, len(masterSpecs))
+	for i := range computeAvailabilityZones {
+		computeAvailabilityZones[i] = masterSpecs[i].AvailabilityZone
+	}
+
+	// storageAvailabilityZones is a slice where each index targets a master.
+	storageAvailabilityZones := make([]string, len(masterSpecs))
+	for i := range storageAvailabilityZones {
+		if masterSpecs[i].RootVolume != nil {
+			storageAvailabilityZones[i] = masterSpecs[i].RootVolume.Zone
+		}
+	}
+
+	// storageVolumeTypes is a slice where each index targets a master.
+	storageVolumeTypes := make([]string, len(masterSpecs))
+	for i := range storageVolumeTypes {
+		if masterSpecs[i].RootVolume != nil {
+			storageVolumeTypes[i] = masterSpecs[i].RootVolume.VolumeType
+		}
+	}
+
+	// If baseImage is a URL, the corresponding image will be uploaded to
+	// Glance in the PreTerraform hook of the Cluster asset.
+	imageName, _ := rhcos.GenerateOpenStackImageName(baseImage, clusterID.InfraID)
+
+	serviceCatalog, err := getServiceCatalog(ctx, cloud)
+	if err != nil {
+		return nil, fmt.Errorf("could not retrieve service catalog: %w", err)
+	}
+
+	octaviaSupport, err := isOctaviaSupported(serviceCatalog)
+	if err != nil {
+		return nil, err
+	}
+
+	var rootVolumeSize int
+	if rootVolume := masterSpecs[0].RootVolume; rootVolume != nil {
+		rootVolumeSize = rootVolume.Size
+	}
+
+	masterServerGroupPolicy := GetServerGroupPolicy(mastermpool, defaultmpool)
+	masterServerGroupName := masterSpecs[0].ServerGroupName
+	if masterSpecs[0].ServerGroupID != "" {
+		return nil, fmt.Errorf("the field ServerGroupID is not implemented in the Installer. Please use ServerGroupName for automatic creation of the Control Plane server group")
+	}
+
+	workerServerGroupPolicy := GetServerGroupPolicy(workermpool, defaultmpool)
+	var workerServerGroupNames []string
+	{
+		for _, workerConfig := range workerSpecs {
+			workerServerGroupNames = append(workerServerGroupNames, workerConfig.ServerGroupName)
+			if workerConfig.ServerGroupID != "" {
+				return nil, fmt.Errorf("the field ServerGroupID is not implemented in the Installer. Please use ServerGroupName for automatic creation of the Compute server group")
 			}
-		case "file":
-			localFilePath = filepath.FromSlash(url.Path)
-		default:
-			return nil, errors.Errorf("Unsupported URL scheme: '%v'", url.Scheme)
 		}
+	}
 
-		err = uploadBaseImage(cloud, localFilePath, imageName, infraID, baseImageProperties)
+	var additionalNetworkIDs []string
+	if mastermpool != nil {
+		additionalNetworkIDs = mastermpool.AdditionalNetworkIDs
+	}
+
+	// defaultMachinesPort carries the machine subnets and the network.
+	var defaultMachinesPort *terraformPort
+	if controlPlanePort := installConfig.Config.Platform.OpenStack.ControlPlanePort; controlPlanePort != nil {
+		port, err := portTargetToTerraformPort(ctx, conn, *controlPlanePort)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to resolve portTarget :%w", err)
 		}
+		defaultMachinesPort = &port
 	}
 
-	clientConfigCloud, err := clientconfig.GetCloudFromYAML(openstackdefaults.DefaultClientOpts(cloud))
-	if err != nil {
-		return nil, err
+	// machinesPorts defines the primary port for a master. A nil value
+	// signals Terraform to fill in the blank with the network it creates.
+	// Each slice index targets a master.
+	machinesPorts := make([]*terraformPort, len(masterSpecs))
+
+	// additionalPorts translates non-control-plane
+	// `failureDomain.portTarget` information in Terraform-understandable
+	// syntax. Each slice index targets a master.
+	additionalPorts := make([][]terraformPort, len(masterSpecs))
+	for i := range masterSpecs {
+		// Assign a slice to each master's index, no matter what.
+		// Terraform expects each master to get an array, empty or otherwise.
+		additionalPorts[i] = []terraformPort{}
+		machinesPorts[i] = defaultMachinesPort
 	}
 
-	glancePublicURL, err := getGlancePublicURL(serviceCatalog, clientConfigCloud.RegionName)
-	if err != nil {
-		return nil, err
+	var additionalSecurityGroupIDs []string
+	if mastermpool != nil {
+		additionalSecurityGroupIDs = mastermpool.AdditionalSecurityGroupIDs
 	}
 
-	configLocation, err := uploadBootstrapConfig(cloud, bootstrapIgn, infraID)
-	if err != nil {
-		return nil, err
-	}
-
-	tokenID, err := getAuthToken(cloud)
-	if err != nil {
-		return nil, err
-	}
-
-	bootstrapConfigURL := fmt.Sprintf("%s%s", glancePublicURL, configLocation)
-	userCAIgnition, err := generateIgnitionShim(userCA, infraID, bootstrapConfigURL, tokenID, proxy)
-	if err != nil {
-		return nil, err
-	}
-
-	cfg.BootstrapShim = userCAIgnition
-	masterConfig := masterConfigs[0]
-
-	cfg.TrunkSupport = masterConfig.Trunk
-
-	cfg.OctaviaSupport, err = isOctaviaSupported(serviceCatalog)
-	if err != nil {
-		return nil, err
-	}
-
-	if masterConfig.RootVolume != nil {
-		cfg.RootVolumeSize = masterConfig.RootVolume.Size
-		cfg.RootVolumeType = masterConfig.RootVolume.VolumeType
-	}
-
-	cfg.MasterServerGroupName = masterConfig.ServerGroupName
-
-	if mpool != nil && mpool.ServerGroupPolicy != types_openstack.SGPolicyUnset {
-		cfg.MasterServerGroupPolicy = mpool.ServerGroupPolicy
-	} else if defaultmpool != nil && defaultmpool.ServerGroupPolicy != types_openstack.SGPolicyUnset {
-		cfg.MasterServerGroupPolicy = defaultmpool.ServerGroupPolicy
-	} else {
-		cfg.MasterServerGroupPolicy = types_openstack.SGPolicySoftAntiAffinity
-	}
-
-	if masterConfig.ServerGroupID != "" {
-		return nil, errors.Errorf("ServerGroupID is not implemented in the Installer. Please use ServerGroupName for automatic creation of the Control Plane server group.")
-	}
-
-	cfg.AdditionalNetworkIDs = []string{}
-	if mpool != nil {
-		cfg.AdditionalNetworkIDs = append(cfg.AdditionalNetworkIDs, mpool.AdditionalNetworkIDs...)
-	}
-
-	cfg.AdditionalSecurityGroupIDs = []string{}
-	if mpool != nil {
-		cfg.AdditionalSecurityGroupIDs = append(cfg.AdditionalSecurityGroupIDs, mpool.AdditionalSecurityGroupIDs...)
-	}
-
-	if machinesSubnet != "" {
-		cfg.MachinesNetwork, err = getNetworkFromSubnet(cloud, machinesSubnet)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return json.MarshalIndent(cfg, "", "  ")
-}
-
-// We need to obtain Glance public endpoint that will be used by Ignition to download bootstrap ignition files.
-// By design this should be done by using https://www.terraform.io/docs/providers/openstack/d/identity_endpoint_v3.html
-// but OpenStack default policies forbid to use this API for regular users.
-// On the other hand when a user authenticates in OpenStack (i.e. gets a token), it includes the whole service
-// catalog in the output json. So we are able to parse the data and get the endpoint from there
-// https://docs.openstack.org/api-ref/identity/v3/?expanded=token-authentication-with-scoped-authorization-detail#token-authentication-with-scoped-authorization
-// Unfortunately this feature is not currently supported by Terraform, so we had to implement it here.
-// We do next:
-// 1. In "getServiceCatalog" we authenticate in OpenStack (tokens.Create(..)),
-//    parse the token and extract the service catalog: (ExtractServiceCatalog())
-// 2. In getGlancePublicURL we iterate through the catalog and find "public" endpoint for "image".
-
-// getGlancePublicURL obtains Glance public endpoint URL
-func getGlancePublicURL(serviceCatalog *tokens.ServiceCatalog, region string) (string, error) {
-	glancePublicURL, err := openstack.V3EndpointURL(serviceCatalog, gophercloud.EndpointOpts{
-		Type:         "image",
-		Availability: gophercloud.AvailabilityPublic,
-		Region:       region,
-	})
-	if err != nil {
-		return "", errors.Errorf("cannot retrieve Glance URL from the service catalog: %v", err)
-	}
-
-	return glancePublicURL, nil
+	return json.MarshalIndent(struct {
+		BaseImageName                     string                            `json:"openstack_base_image_name,omitempty"`
+		ExternalNetwork                   string                            `json:"openstack_external_network,omitempty"`
+		Cloud                             string                            `json:"openstack_credentials_cloud,omitempty"`
+		FlavorName                        string                            `json:"openstack_master_flavor_name,omitempty"`
+		APIFloatingIP                     string                            `json:"openstack_api_floating_ip,omitempty"`
+		IngressFloatingIP                 string                            `json:"openstack_ingress_floating_ip,omitempty"`
+		APIVIPs                           []string                          `json:"openstack_api_int_ips,omitempty"`
+		IngressVIPs                       []string                          `json:"openstack_ingress_ips,omitempty"`
+		OctaviaSupport                    bool                              `json:"openstack_octavia_support,omitempty"`
+		RootVolumeSize                    int                               `json:"openstack_master_root_volume_size,omitempty"`
+		BootstrapShim                     string                            `json:"openstack_bootstrap_shim_ignition,omitempty"`
+		ExternalDNS                       []string                          `json:"openstack_external_dns,omitempty"`
+		MasterServerGroupName             string                            `json:"openstack_master_server_group_name,omitempty"`
+		MasterServerGroupPolicy           types_openstack.ServerGroupPolicy `json:"openstack_master_server_group_policy"`
+		WorkerServerGroupNames            []string                          `json:"openstack_worker_server_group_names,omitempty"`
+		WorkerServerGroupPolicy           types_openstack.ServerGroupPolicy `json:"openstack_worker_server_group_policy"`
+		AdditionalNetworkIDs              []string                          `json:"openstack_additional_network_ids,omitempty"`
+		AdditionalPorts                   [][]terraformPort                 `json:"openstack_additional_ports"`
+		AdditionalSecurityGroupIDs        []string                          `json:"openstack_master_extra_sg_ids,omitempty"`
+		DefaultMachinesPort               *terraformPort                    `json:"openstack_default_machines_port,omitempty"`
+		MachinesPorts                     []*terraformPort                  `json:"openstack_machines_ports"`
+		MasterAvailabilityZones           []string                          `json:"openstack_master_availability_zones,omitempty"`
+		MasterRootVolumeAvailabilityZones []string                          `json:"openstack_master_root_volume_availability_zones,omitempty"`
+		MasterRootVolumeTypes             []string                          `json:"openstack_master_root_volume_types,omitempty"`
+		UserManagedLoadBalancer           bool                              `json:"openstack_user_managed_load_balancer"`
+	}{
+		BaseImageName:                     imageName,
+		ExternalNetwork:                   installConfig.Config.Platform.OpenStack.ExternalNetwork,
+		Cloud:                             cloud,
+		FlavorName:                        masterSpecs[0].Flavor,
+		APIFloatingIP:                     installConfig.Config.Platform.OpenStack.APIFloatingIP,
+		IngressFloatingIP:                 installConfig.Config.Platform.OpenStack.IngressFloatingIP,
+		APIVIPs:                           installConfig.Config.Platform.OpenStack.APIVIPs,
+		IngressVIPs:                       installConfig.Config.Platform.OpenStack.IngressVIPs,
+		OctaviaSupport:                    octaviaSupport,
+		RootVolumeSize:                    rootVolumeSize,
+		BootstrapShim:                     bootstrapIgn,
+		ExternalDNS:                       installConfig.Config.Platform.OpenStack.ExternalDNS,
+		MasterServerGroupName:             masterServerGroupName,
+		MasterServerGroupPolicy:           masterServerGroupPolicy,
+		WorkerServerGroupNames:            workerServerGroupNames,
+		WorkerServerGroupPolicy:           workerServerGroupPolicy,
+		AdditionalNetworkIDs:              additionalNetworkIDs,
+		AdditionalPorts:                   additionalPorts,
+		AdditionalSecurityGroupIDs:        additionalSecurityGroupIDs,
+		DefaultMachinesPort:               defaultMachinesPort,
+		MachinesPorts:                     machinesPorts,
+		MasterAvailabilityZones:           computeAvailabilityZones,
+		MasterRootVolumeAvailabilityZones: storageAvailabilityZones,
+		MasterRootVolumeTypes:             storageVolumeTypes,
+		UserManagedLoadBalancer:           userManagedLoadBalancer,
+	}, "", "  ")
 }
 
 // getServiceCatalog fetches OpenStack service catalog with service endpoints
-func getServiceCatalog(cloud string) (*tokens.ServiceCatalog, error) {
-	conn, err := clientconfig.NewServiceClient("identity", openstackdefaults.DefaultClientOpts(cloud))
+func getServiceCatalog(ctx context.Context, cloud string) (*tokens.ServiceCatalog, error) {
+	conn, err := openstackdefaults.NewServiceClient(ctx, "identity", openstackdefaults.DefaultClientOpts(cloud))
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +245,7 @@ func getServiceCatalog(cloud string) (*tokens.ServiceCatalog, error) {
 	authResult := conn.GetAuthResult()
 	auth, ok := authResult.(tokens.CreateResult)
 	if !ok {
-		return nil, errors.New("unable to extract service catalog")
+		return nil, fmt.Errorf("unable to extract service catalog")
 	}
 
 	serviceCatalog, err := auth.ExtractServiceCatalog()
@@ -239,21 +254,6 @@ func getServiceCatalog(cloud string) (*tokens.ServiceCatalog, error) {
 	}
 
 	return serviceCatalog, nil
-}
-
-// getNetworkFromSubnet looks up a subnet in openstack and returns the ID of the network it's a part of
-func getNetworkFromSubnet(cloud string, subnetID string) (string, error) {
-	networkClient, err := clientconfig.NewServiceClient("network", openstackdefaults.DefaultClientOpts(cloud))
-	if err != nil {
-		return "", err
-	}
-
-	subnet, err := subnets.Get(networkClient, subnetID).Extract()
-	if err != nil {
-		return "", err
-	}
-
-	return subnet.NetworkID, nil
 }
 
 func isOctaviaSupported(serviceCatalog *tokens.ServiceCatalog) (bool, error) {
@@ -270,4 +270,15 @@ func isOctaviaSupported(serviceCatalog *tokens.ServiceCatalog) (bool, error) {
 	}
 
 	return true, nil
+}
+
+// GetServerGroupPolicy returns the server group policy set in the given machine-pool, or in the default one, or falls back to soft-anti-affinity.
+func GetServerGroupPolicy(machinePool, defaultMachinePool *types_openstack.MachinePool) types_openstack.ServerGroupPolicy {
+	if machinePool != nil && machinePool.ServerGroupPolicy.IsSet() {
+		return machinePool.ServerGroupPolicy
+	}
+	if defaultMachinePool != nil && defaultMachinePool.ServerGroupPolicy.IsSet() {
+		return defaultMachinePool.ServerGroupPolicy
+	}
+	return types_openstack.SGPolicySoftAntiAffinity
 }

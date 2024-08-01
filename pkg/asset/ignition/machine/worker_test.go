@@ -1,6 +1,7 @@
 package machine
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,8 +16,8 @@ import (
 
 // TestWorkerGenerate tests generating the worker asset.
 func TestWorkerGenerate(t *testing.T) {
-	installConfig := &installconfig.InstallConfig{
-		Config: &types.InstallConfig{
+	installConfig := installconfig.MakeAsset(
+		&types.InstallConfig{
 			Networking: &types.Networking{
 				ServiceNetwork: []ipnet.IPNet{*ipnet.MustParseCIDR("10.0.1.0/24")},
 			},
@@ -25,18 +26,17 @@ func TestWorkerGenerate(t *testing.T) {
 					Region: "us-east",
 				},
 			},
-		},
-	}
+		})
 
 	rootCA := &tls.RootCA{}
-	err := rootCA.Generate(nil)
+	err := rootCA.Generate(context.Background(), nil)
 	assert.NoError(t, err, "unexpected error generating root CA")
 
 	parents := asset.Parents{}
 	parents.Add(installConfig, rootCA)
 
 	worker := &Worker{}
-	err = worker.Generate(parents)
+	err = worker.Generate(context.Background(), parents)
 	assert.NoError(t, err, "unexpected error generating worker asset")
 
 	actualFiles := worker.Files()

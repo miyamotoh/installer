@@ -1,27 +1,23 @@
 package main
 
 import (
+	"context"
 	"flag"
-	"io/ioutil"
+	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"golang.org/x/crypto/ssh/terminal"
+	terminal "golang.org/x/term"
 	"k8s.io/klog"
 	klogv2 "k8s.io/klog/v2"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 
-	"github.com/openshift/installer/pkg/terraform/exec/plugins"
-)
-
-var (
-	rootOpts struct {
-		dir      string
-		logLevel string
-	}
+	"github.com/openshift/installer/cmd/openshift-install/command"
+	"github.com/openshift/installer/pkg/clusterapi"
 )
 
 func main() {
@@ -31,21 +27,14 @@ func main() {
 	var fs flag.FlagSet
 	klog.InitFlags(&fs)
 	fs.Set("stderrthreshold", "4")
-	klog.SetOutput(ioutil.Discard)
+	klog.SetOutput(io.Discard)
 	// Handle k8s.io/klog/v2
 	var fsv2 flag.FlagSet
 	klogv2.InitFlags(&fsv2)
 	fsv2.Set("stderrthreshold", "4")
-	klogv2.SetOutput(ioutil.Discard)
+	klogv2.SetOutput(io.Discard)
 
-	if len(os.Args) > 0 {
-		base := filepath.Base(os.Args[0])
-		cname := strings.TrimSuffix(base, filepath.Ext(base))
-		if pluginRunner, ok := plugins.KnownPlugins[cname]; ok {
-			pluginRunner()
-			return
-		}
-	}
+	ctrl.SetLogger(klogv2.Background())
 
 	installerMain()
 }
@@ -53,18 +42,24 @@ func main() {
 func installerMain() {
 	rootCmd := newRootCmd()
 
+	// Perform a graceful shutdown upon interrupt or at exit.
+	ctx := handleInterrupt(signals.SetupSignalHandler())
+	logrus.RegisterExitHandler(shutdown)
+
 	for _, subCmd := range []*cobra.Command{
-		newCreateCmd(),
+		newCreateCmd(ctx),
 		newDestroyCmd(),
 		newWaitForCmd(),
-		newGatherCmd(),
+		newGatherCmd(ctx),
 		newAnalyzeCmd(),
 		newVersionCmd(),
 		newGraphCmd(),
 		newCoreOSCmd(),
 		newCompletionCmd(),
-		newMigrateCmd(),
 		newExplainCmd(),
+		newAgentCmd(ctx),
+		newListFeaturesCmd(),
+		newImageBasedCmd(ctx),
 	} {
 		rootCmd.AddCommand(subCmd)
 	}
@@ -83,24 +78,24 @@ func newRootCmd() *cobra.Command {
 		SilenceErrors:    true,
 		SilenceUsage:     true,
 	}
-	cmd.PersistentFlags().StringVar(&rootOpts.dir, "dir", ".", "assets directory")
-	cmd.PersistentFlags().StringVar(&rootOpts.logLevel, "log-level", "info", "log level (e.g. \"debug | info | warn | error\")")
+	cmd.PersistentFlags().StringVar(&command.RootOpts.Dir, "dir", ".", "assets directory")
+	cmd.PersistentFlags().StringVar(&command.RootOpts.LogLevel, "log-level", "info", "log level (e.g. \"debug | info | warn | error\")")
 	return cmd
 }
 
 func runRootCmd(cmd *cobra.Command, args []string) {
-	logrus.SetOutput(ioutil.Discard)
+	logrus.SetOutput(io.Discard)
 	logrus.SetLevel(logrus.TraceLevel)
 
-	level, err := logrus.ParseLevel(rootOpts.logLevel)
+	level, err := logrus.ParseLevel(command.RootOpts.LogLevel)
 	if err != nil {
 		level = logrus.InfoLevel
 	}
 
-	logrus.AddHook(newFileHookWithNewlineTruncate(os.Stderr, level, &logrus.TextFormatter{
+	logrus.AddHook(command.NewFileHookWithNewlineTruncate(os.Stderr, level, &logrus.TextFormatter{
 		// Setting ForceColors is necessary because logrus.TextFormatter determines
 		// whether or not to enable colors by looking at the output of the logger.
-		// In this case, the output is ioutil.Discard, which is not a terminal.
+		// In this case, the output is io.Discard, which is not a terminal.
 		// Overriding it here allows the same check to be done, but against the
 		// hook's output instead of the logger's output.
 		ForceColors:            terminal.IsTerminal(int(os.Stderr.Fd())),
@@ -112,4 +107,27 @@ func runRootCmd(cmd *cobra.Command, args []string) {
 	if err != nil {
 		logrus.Fatal(errors.Wrap(err, "invalid log-level"))
 	}
+}
+
+// handleInterrupt executes a graceful shutdown then exits in
+// the case of a user interrupt. It returns a new context that
+// will be cancelled upon interrupt.
+func handleInterrupt(signalCtx context.Context) context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// If the context from the signal handler is done,
+	// an interrupt has been received, so shutdown & exit.
+	go func() {
+		<-signalCtx.Done()
+		logrus.Warn("Received interrupt signal")
+		shutdown()
+		cancel()
+		logrus.Exit(exitCodeInterrupt)
+	}()
+
+	return ctx
+}
+
+func shutdown() {
+	clusterapi.System().Teardown()
 }

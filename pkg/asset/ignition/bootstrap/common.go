@@ -7,7 +7,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"path"
@@ -16,14 +15,15 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/containers/image/pkg/sysregistriesv2"
+	"github.com/containers/image/v5/pkg/sysregistriesv2"
 	ignutil "github.com/coreos/ignition/v2/config/util"
 	igntypes "github.com/coreos/ignition/v2/config/v3_2/types"
-	configv1 "github.com/openshift/api/config/v1"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/vincent-petithory/dataurl"
+	utilsnet "k8s.io/utils/net"
 
+	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/installer/data"
 	"github.com/openshift/installer/pkg/asset"
 	"github.com/openshift/installer/pkg/asset/ignition"
@@ -50,14 +50,17 @@ var (
 	commonEnabledServices = []string{
 		"progress.service",
 		"kubelet.service",
-		"chown-gatewayd-key.service",
-		"systemd-journal-gatewayd.socket",
 		"approve-csr.service",
 		// baremetal & openstack platform services
 		"keepalived.service",
 		"coredns.service",
 		"ironic.service",
 		"master-bmh-update.service",
+	}
+
+	rhcosEnabledServices = []string{
+		"chown-gatewayd-key.service",
+		"systemd-journal-gatewayd.socket",
 	}
 )
 
@@ -77,7 +80,16 @@ type bootstrapTemplateData struct {
 	PlatformData          platformTemplateData
 	BootstrapInPlace      *types.BootstrapInPlace
 	UseIPv6ForNodeIP      bool
+	UseDualForNodeIP      bool
+	IsFCOS                bool
+	IsSCOS                bool
 	IsOKD                 bool
+	BootstrapNodeIP       string
+	APIServerURL          string
+	APIIntServerURL       string
+	FeatureSet            configv1.FeatureSet
+	Invoker               string
+	ClusterDomain         string
 }
 
 // platformTemplateData is the data to use to replace values in bootstrap
@@ -97,6 +109,7 @@ type Common struct {
 func (a *Common) Dependencies() []asset.Asset {
 	return []asset.Asset{
 		&baremetal.IronicCreds{},
+		&CVOIgnore{},
 		&installconfig.InstallConfig{},
 		&kubeconfig.AdminInternalClient{},
 		&kubeconfig.Kubelet{},
@@ -162,11 +175,16 @@ func (a *Common) generateConfig(dependencies asset.Parents, templateData *bootst
 		},
 	}
 
-	if err := a.addStorageFiles("/", "bootstrap/files", templateData); err != nil {
+	if err := AddStorageFiles(a.Config, "/", "bootstrap/files", templateData); err != nil {
 		return err
 	}
-	if err := a.addSystemdUnits("bootstrap/systemd/units", templateData, commonEnabledServices); err != nil {
+	if err := AddSystemdUnits(a.Config, "bootstrap/systemd/common/units", templateData, commonEnabledServices); err != nil {
 		return err
+	}
+	if !templateData.IsOKD {
+		if err := AddSystemdUnits(a.Config, "bootstrap/systemd/rhcos/units", templateData, rhcosEnabledServices); err != nil {
+			return err
+		}
 	}
 
 	// Check for optional platform specific files/units
@@ -175,7 +193,7 @@ func (a *Common) generateConfig(dependencies asset.Parents, templateData *bootst
 	directory, err := data.Assets.Open(platformFilePath)
 	if err == nil {
 		directory.Close()
-		err = a.addStorageFiles("/", platformFilePath, templateData)
+		err = AddStorageFiles(a.Config, "/", platformFilePath, templateData)
 		if err != nil {
 			return err
 		}
@@ -185,7 +203,7 @@ func (a *Common) generateConfig(dependencies asset.Parents, templateData *bootst
 	directory, err = data.Assets.Open(platformUnitPath)
 	if err == nil {
 		directory.Close()
-		if err = a.addSystemdUnits(platformUnitPath, templateData, commonEnabledServices); err != nil {
+		if err = AddSystemdUnits(a.Config, platformUnitPath, templateData, commonEnabledServices); err != nil {
 			return err
 		}
 	}
@@ -240,7 +258,13 @@ func (a *Common) getTemplateData(dependencies asset.Parents, bootstrapInPlace bo
 	}
 
 	registries := []sysregistriesv2.Registry{}
-	for _, group := range mergedMirrorSets(installConfig.Config.ImageContentSources) {
+	digestMirrorSources := []types.ImageDigestSource{}
+	if len(installConfig.Config.DeprecatedImageContentSources) > 0 {
+		digestMirrorSources = ContentSourceToDigestMirror(installConfig.Config.DeprecatedImageContentSources)
+	} else if len(installConfig.Config.ImageDigestSources) > 0 {
+		digestMirrorSources = append(digestMirrorSources, installConfig.Config.ImageDigestSources...)
+	}
+	for _, group := range MergedMirrorSets(digestMirrorSources) {
 		if len(group.Mirrors) == 0 {
 			continue
 		}
@@ -259,17 +283,33 @@ func (a *Common) getTemplateData(dependencies asset.Parents, bootstrapInPlace bo
 
 	switch installConfig.Config.Platform.Name() {
 	case baremetaltypes.Name:
-		platformData.BareMetal = baremetal.GetTemplateData(installConfig.Config.Platform.BareMetal, installConfig.Config.MachineNetwork, ironicCreds.Username, ironicCreds.Password)
+		platformData.BareMetal = baremetal.GetTemplateData(
+			installConfig.Config.Platform.BareMetal,
+			installConfig.Config.MachineNetwork,
+			*installConfig.Config.ControlPlane.Replicas,
+			ironicCreds.Username,
+			ironicCreds.Password,
+		)
 	case vspheretypes.Name:
 		platformData.VSphere = vsphere.GetTemplateData(installConfig.Config.Platform.VSphere)
 	}
 
-	var APIIntVIPonIPv6 bool
-	platformAPIVIP := apiVIP(&installConfig.Config.Platform)
-	if platformAPIVIP == "" {
-		APIIntVIPonIPv6 = false
-	} else {
-		APIIntVIPonIPv6 = net.ParseIP(platformAPIVIP).To4() == nil
+	bootstrapNodeIP := os.Getenv("OPENSHIFT_INSTALL_BOOTSTRAP_NODE_IP")
+	if bootstrapNodeIP != "" && net.ParseIP(bootstrapNodeIP) == nil {
+		logrus.Warnf("OPENSHIFT_INSTALL_BOOTSTRAP_NODE_IP must have valid ip address, given %s. Skipping it", bootstrapNodeIP)
+		bootstrapNodeIP = ""
+	}
+
+	var hasIPv4, hasIPv6, ipv6Primary bool
+	for i, snet := range installConfig.Config.ServiceNetwork {
+		if utilsnet.IsIPv4(snet.IP) {
+			hasIPv4 = true
+		} else {
+			hasIPv6 = true
+			if i == 0 {
+				ipv6Primary = true
+			}
+		}
 	}
 
 	// Set cluster profile
@@ -282,6 +322,12 @@ func (a *Common) getTemplateData(dependencies asset.Parents, bootstrapInPlace bo
 	if bootstrapInPlace {
 		bootstrapInPlaceConfig = installConfig.Config.BootstrapInPlace
 	}
+
+	apiURL := fmt.Sprintf("api.%s", installConfig.Config.ClusterDomain())
+	apiIntURL := fmt.Sprintf("api-int.%s", installConfig.Config.ClusterDomain())
+
+	openshiftInstallInvoker := os.Getenv("OPENSHIFT_INSTALL_INVOKER")
+
 	return &bootstrapTemplateData{
 		AdditionalTrustBundle: installConfig.Config.AdditionalTrustBundle,
 		FIPS:                  installConfig.Config.FIPS,
@@ -291,16 +337,31 @@ func (a *Common) getTemplateData(dependencies asset.Parents, bootstrapInPlace bo
 		EtcdCluster:           strings.Join(etcdEndpoints, ","),
 		Proxy:                 &proxy.Config.Status,
 		Registries:            registries,
-		BootImage:             string(*rhcosImage),
+		BootImage:             rhcosImage.ControlPlane,
 		PlatformData:          platformData,
 		ClusterProfile:        clusterProfile,
 		BootstrapInPlace:      bootstrapInPlaceConfig,
-		UseIPv6ForNodeIP:      APIIntVIPonIPv6,
+		UseIPv6ForNodeIP:      ipv6Primary,
+		UseDualForNodeIP:      hasIPv4 && hasIPv6,
+		IsFCOS:                installConfig.Config.IsFCOS(),
+		IsSCOS:                installConfig.Config.IsSCOS(),
 		IsOKD:                 installConfig.Config.IsOKD(),
+		BootstrapNodeIP:       bootstrapNodeIP,
+		APIServerURL:          apiURL,
+		APIIntServerURL:       apiIntURL,
+		FeatureSet:            installConfig.Config.FeatureSet,
+		Invoker:               openshiftInstallInvoker,
+		ClusterDomain:         installConfig.Config.ClusterDomain(),
 	}
 }
 
-func (a *Common) addStorageFiles(base string, uri string, templateData *bootstrapTemplateData) (err error) {
+// AddStorageFiles adds files to a Ignition config.
+// Parameters:
+// config - the ignition config to be modified
+// base - path were the files are written to in to config
+// uri - path under data/data specifying the files to be included
+// templateData - struct to used to render templates
+func AddStorageFiles(config *igntypes.Config, base string, uri string, templateData interface{}) (err error) {
 	file, err := data.Assets.Open(uri)
 	if err != nil {
 		return err
@@ -323,7 +384,7 @@ func (a *Common) addStorageFiles(base string, uri string, templateData *bootstra
 
 		for _, childInfo := range children {
 			name := childInfo.Name()
-			err = a.addStorageFiles(path.Join(base, name), path.Join(uri, name), templateData)
+			err = AddStorageFiles(config, path.Join(base, name), path.Join(uri, name), templateData)
 			if err != nil {
 				return err
 			}
@@ -344,9 +405,13 @@ func (a *Common) addStorageFiles(base string, uri string, templateData *bootstra
 	appendToFile := false
 	if parentDir == "bin" || parentDir == "dispatcher.d" {
 		mode = 0555
-	} else if filename == "motd" {
+	} else if filename == "motd" || filename == "containers.conf" {
 		mode = 0644
 		appendToFile = true
+	} else if filename == "registries.conf" {
+		// Having the mode be private breaks rpm-ostree, xref
+		// https://github.com/openshift/installer/pull/6789
+		mode = 0644
 	} else {
 		mode = 0600
 	}
@@ -356,12 +421,18 @@ func (a *Common) addStorageFiles(base string, uri string, templateData *bootstra
 	}
 
 	// Replace files that already exist in the slice with ones added later, otherwise append them
-	a.Config.Storage.Files = replaceOrAppend(a.Config.Storage.Files, ign)
+	config.Storage.Files = replaceOrAppend(config.Storage.Files, ign)
 
 	return nil
 }
 
-func (a *Common) addSystemdUnits(uri string, templateData *bootstrapTemplateData, enabledServices []string) (err error) {
+// AddSystemdUnits adds systemd units to a Ignition config.
+// Parameters:
+// config - the ignition config to be modified
+// uri - path under data/data specifying the systemd units files to be included
+// templateData - struct to used to render templates
+// enabledServices - a list of systemd units to be enabled by default
+func AddSystemdUnits(config *igntypes.Config, uri string, templateData interface{}, enabledServices []string) (err error) {
 	enabled := make(map[string]struct{}, len(enabledServices))
 	for _, s := range enabledServices {
 		enabled[s] = struct{}{}
@@ -432,7 +503,7 @@ func (a *Common) addSystemdUnits(uri string, templateData *bootstrapTemplateData
 			if _, ok := enabled[name]; ok {
 				unit.Enabled = ignutil.BoolToPtr(true)
 			}
-			a.Config.Systemd.Units = append(a.Config.Systemd.Units, unit)
+			config.Systemd.Units = append(config.Systemd.Units, unit)
 		} else {
 			name, contents, err := readFile(childInfo.Name(), file, templateData)
 			if err != nil {
@@ -446,25 +517,30 @@ func (a *Common) addSystemdUnits(uri string, templateData *bootstrapTemplateData
 			if _, ok := enabled[name]; ok {
 				unit.Enabled = ignutil.BoolToPtr(true)
 			}
-			a.Config.Systemd.Units = append(a.Config.Systemd.Units, unit)
+			config.Systemd.Units = append(config.Systemd.Units, unit)
 		}
 	}
 
 	return nil
 }
 
+// replace is an utilitary function to do string replacement in templates.
+func replace(input, from, to string) string {
+	return strings.ReplaceAll(input, from, to)
+}
+
 // Read data from the string reader, and, if the name ends with
 // '.template', strip that extension from the name and render the
 // template.
 func readFile(name string, reader io.Reader, templateData interface{}) (finalName string, data []byte, err error) {
-	data, err = ioutil.ReadAll(reader)
+	data, err = io.ReadAll(reader)
 	if err != nil {
 		return name, []byte{}, err
 	}
 
 	if filepath.Ext(name) == ".template" {
 		name = strings.TrimSuffix(name, ".template")
-		tmpl := template.New(name)
+		tmpl := template.New(name).Funcs(template.FuncMap{"replace": replace})
 		tmpl, err := tmpl.Parse(string(data))
 		if err != nil {
 			return name, data, err
@@ -486,6 +562,7 @@ func (a *Common) addParentFiles(dependencies asset.Parents) {
 		&machines.Worker{},
 		&mcign.MasterIgnitionCustomizations{},
 		&mcign.WorkerIgnitionCustomizations{},
+		&CVOIgnore{}, // this must come after manifests.Manifests so that it replaces cvo-overrides.yaml
 	} {
 		dependencies.Get(asset)
 
@@ -624,26 +701,5 @@ func warnIfCertificatesExpired(config *igntypes.Config) {
 
 	if expiredCerts > 0 {
 		logrus.Warnf("Bootstrap Ignition-Config: %d certificates expired. Installation attempts with the created Ignition-Configs will possibly fail.", expiredCerts)
-	}
-}
-
-// APIVIP returns a string representation of the platform's API VIP
-// It returns an empty string if the platform does not configure a VIP
-func apiVIP(p *types.Platform) string {
-	switch {
-	case p == nil:
-		return ""
-	case p.BareMetal != nil:
-		return p.BareMetal.APIVIP
-	case p.OpenStack != nil:
-		return p.OpenStack.APIVIP
-	case p.VSphere != nil:
-		return p.VSphere.APIVIP
-	case p.Ovirt != nil:
-		return p.Ovirt.APIVIP
-	case p.Kubevirt != nil:
-		return p.Kubevirt.APIVIP
-	default:
-		return ""
 	}
 }

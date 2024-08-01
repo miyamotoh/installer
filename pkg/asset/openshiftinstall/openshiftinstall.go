@@ -1,13 +1,14 @@
 package openshiftinstall
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 
-	"github.com/ghodss/yaml"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/yaml"
 
 	"github.com/openshift/installer/pkg/asset"
 	"github.com/openshift/installer/pkg/version"
@@ -36,7 +37,7 @@ func (*Config) Dependencies() []asset.Asset {
 }
 
 // Generate generates the openshift-install ConfigMap.
-func (i *Config) Generate(dependencies asset.Parents) error {
+func (i *Config) Generate(_ context.Context, dependencies asset.Parents) error {
 	cm, err := CreateInstallConfigMap("openshift-install-manifests")
 	if err != nil {
 		return err

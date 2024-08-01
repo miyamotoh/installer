@@ -10,17 +10,39 @@ import (
 )
 
 // Metadata converts an install configuration to IBM Cloud metadata.
-func Metadata(infraID string, config *types.InstallConfig, meta *icibmcloud.Metadata) *ibmcloud.Metadata {
+func Metadata(infraID string, config *types.InstallConfig) *ibmcloud.Metadata {
+	meta := icibmcloud.NewMetadata(config)
 	accountID, _ := meta.AccountID(context.TODO())
 	cisCrn, _ := meta.CISInstanceCRN(context.TODO())
+	dnsInstance, _ := meta.DNSInstance(context.TODO())
+
+	var dnsInstanceID string
+	if dnsInstance != nil {
+		dnsInstanceID = dnsInstance.ID
+	}
+
+	subnets := []string{}
+	controlPlaneSubnets, _ := meta.ControlPlaneSubnets(context.TODO())
+	for id := range controlPlaneSubnets {
+		subnets = append(subnets, id)
+	}
+	computeSubnets, _ := meta.ComputeSubnets(context.TODO())
+	for id := range computeSubnets {
+		subnets = append(subnets, id)
+	}
+
+	// TODO: For now we don't care about any duplicates in 'subnets', but might need to remove any if we need to
+	// process the subnets data. Currently, if there is one or more subnet, we skip destroying all subnets (user-provided)
 
 	return &ibmcloud.Metadata{
 		AccountID:         accountID,
 		BaseDomain:        config.BaseDomain,
 		CISInstanceCRN:    cisCrn,
+		DNSInstanceID:     dnsInstanceID,
 		Region:            config.Platform.IBMCloud.Region,
 		ResourceGroupName: config.Platform.IBMCloud.ClusterResourceGroupName(infraID),
-		Subnets:           config.Platform.IBMCloud.Subnets,
-		VPC:               config.Platform.IBMCloud.VPC,
+		ServiceEndpoints:  config.Platform.IBMCloud.ServiceEndpoints,
+		Subnets:           subnets,
+		VPC:               config.Platform.IBMCloud.GetVPCName(),
 	}
 }

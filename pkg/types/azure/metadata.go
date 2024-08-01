@@ -6,6 +6,12 @@ type Metadata struct {
 	CloudName                   CloudEnvironment `json:"cloudName"`
 	Region                      string           `json:"region"`
 	ResourceGroupName           string           `json:"resourceGroupName"`
-	ClusterName                 string           `json:"clusterName"`
 	BaseDomainResourceGroupName string           `json:"baseDomainResourceGroupName"`
 }
+
+// Keys used to save Metadata information as tags.
+const (
+	TagMetadataRegion       = "openshift_region"
+	TagMetadataBaseDomainRG = "openshift_basedomainRG"
+	TagMetadataNetworkRG    = "openshift_networkRG"
+)

@@ -36,6 +36,7 @@ type NetworkFlag struct {
 	adapter string
 	address string
 	isset   bool
+	proto   string
 }
 
 var networkFlagKey = flagKey("network")
@@ -62,6 +63,7 @@ func (flag *NetworkFlag) Register(ctx context.Context, f *flag.FlagSet) {
 		f.Var(flag, "net", usage)
 		f.StringVar(&flag.adapter, "net.adapter", "e1000", "Network adapter type")
 		f.StringVar(&flag.address, "net.address", "", "Network hardware address")
+		f.StringVar(&flag.proto, "net.protocol", "", fmt.Sprintf("Network device protocol. Applicable to vmxnet3vrdma. Default to '%s'", string(types.VirtualVmxnet3VrdmaOptionDeviceProtocolsRocev2)))
 	})
 }
 
@@ -121,7 +123,23 @@ func (flag *NetworkFlag) Device() (types.BaseVirtualDevice, error) {
 		return nil, err
 	}
 
-	if flag.address != "" {
+	if a, ok := device.(*types.VirtualVmxnet3Vrdma); ok {
+		if flag.proto != "" {
+			if flag.proto != string(types.VirtualVmxnet3VrdmaOptionDeviceProtocolsRocev2) &&
+				flag.proto != string(types.VirtualVmxnet3VrdmaOptionDeviceProtocolsRocev1) {
+				return nil, fmt.Errorf("invalid device protocol '%s'", flag.proto)
+			}
+			a.DeviceProtocol = flag.proto
+		}
+	} else if flag.proto != "" {
+		return nil, fmt.Errorf("device protocol is only supported for vmxnet3vrdma at the moment")
+	}
+
+	if flag.address == "-" {
+		card := device.(types.BaseVirtualEthernetCard).GetVirtualEthernetCard()
+		card.AddressType = string(types.VirtualEthernetCardMacTypeGenerated)
+		card.MacAddress = ""
+	} else if flag.address != "" {
 		card := device.(types.BaseVirtualEthernetCard).GetVirtualEthernetCard()
 		card.AddressType = string(types.VirtualEthernetCardMacTypeManual)
 		card.MacAddress = flag.address

@@ -2,12 +2,13 @@
 package openstack
 
 import (
+	"context"
+	"fmt"
 	"sort"
 	"strings"
 
 	survey "github.com/AlecAivazis/survey/v2"
 	"github.com/AlecAivazis/survey/v2/core"
-	"github.com/pkg/errors"
 
 	"github.com/openshift/installer/pkg/types/openstack"
 )
@@ -17,7 +18,7 @@ const (
 )
 
 // Platform collects OpenStack-specific configuration.
-func Platform() (*openstack.Platform, error) {
+func Platform(ctx context.Context) (*openstack.Platform, error) {
 	cloudNames, err := getCloudNames()
 	if err != nil {
 		return nil, err
@@ -36,17 +37,17 @@ func Platform() (*openstack.Platform, error) {
 				value := ans.(core.OptionAnswer).Value
 				i := sort.SearchStrings(cloudNames, value)
 				if i == len(cloudNames) || cloudNames[i] != value {
-					return errors.Errorf("invalid cloud name %q, should be one of %+v", value, strings.Join(cloudNames, ", "))
+					return fmt.Errorf("invalid cloud name %q, should be one of %s", value, strings.Join(cloudNames, ", "))
 				}
 				return nil
 			}),
 		},
 	}, &cloud)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed UserInput")
+		return nil, fmt.Errorf("failed UserInput: %w", err)
 	}
 
-	networkNames, err := getExternalNetworkNames(cloud)
+	networkNames, err := getExternalNetworkNames(ctx, cloud)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +66,7 @@ func Platform() (*openstack.Platform, error) {
 				value := ans.(core.OptionAnswer).Value
 				i := sort.SearchStrings(networkNames, value)
 				if i == len(networkNames) || networkNames[i] != value {
-					return errors.Errorf("invalid network name %q, should be one of %+v", value, strings.Join(networkNames, ", "))
+					return fmt.Errorf("invalid network name %q, should be one of %s", value, strings.Join(networkNames, ", "))
 				}
 				return nil
 			}),
@@ -75,39 +76,38 @@ func Platform() (*openstack.Platform, error) {
 		extNet = ""
 	}
 	if err != nil {
-		return nil, errors.Wrap(err, "failed UserInput")
+		return nil, fmt.Errorf("failed UserInput: %w", err)
 	}
 
 	var apiFloatingIP string
 	if extNet != "" {
-		floatingIPNames, err := getFloatingIPNames(cloud, extNet)
+		floatingIPs, err := getFloatingIPs(ctx, cloud, extNet)
 		if err != nil {
 			return nil, err
 		}
-		sort.Strings(floatingIPNames)
+		sort.Sort(floatingIPs)
 		err = survey.Ask([]*survey.Question{
 			{
 				Prompt: &survey.Select{
-					Message: "APIFloatingIPAddress",
-					Help:    "The Floating IP address used for external access to the OpenShift API.",
-					Options: floatingIPNames,
+					Message:     "APIFloatingIPAddress",
+					Help:        "The Floating IP address used for external access to the OpenShift API.",
+					Options:     floatingIPs.Names(),
+					Description: func(_ string, index int) string { return floatingIPs.Description(index) },
 				},
 				Validate: survey.ComposeValidators(survey.Required, func(ans interface{}) error {
-					value := ans.(core.OptionAnswer).Value
-					i := sort.SearchStrings(floatingIPNames, value)
-					if i == len(floatingIPNames) || floatingIPNames[i] != value {
-						return errors.Errorf("invalid floating IP %q, should be one of %+v", value, strings.Join(floatingIPNames, ", "))
+					if value := ans.(core.OptionAnswer).Value; !floatingIPs.Contains(value) {
+						return fmt.Errorf("invalid floating IP %q, should be one of %s", value, strings.Join(floatingIPs.Names(), ", "))
 					}
 					return nil
 				}),
 			},
 		}, &apiFloatingIP)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed UserInput")
+			return nil, fmt.Errorf("failed UserInput: %w", err)
 		}
 	}
 
-	flavorNames, err := getFlavorNames(cloud)
+	flavorNames, err := getFlavorNames(ctx, cloud)
 	if err != nil {
 		return nil, err
 	}
@@ -124,14 +124,14 @@ func Platform() (*openstack.Platform, error) {
 				value := ans.(core.OptionAnswer).Value
 				i := sort.SearchStrings(flavorNames, value)
 				if i == len(flavorNames) || flavorNames[i] != value {
-					return errors.Errorf("invalid flavor name %q, should be one of %+v", value, strings.Join(flavorNames, ", "))
+					return fmt.Errorf("invalid flavor name %q, should be one of %s", value, strings.Join(flavorNames, ", "))
 				}
 				return nil
 			}),
 		},
 	}, &flavor)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed UserInput")
+		return nil, fmt.Errorf("failed UserInput: %w", err)
 	}
 
 	return &openstack.Platform{

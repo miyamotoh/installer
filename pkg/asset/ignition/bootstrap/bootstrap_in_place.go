@@ -1,6 +1,8 @@
 package bootstrap
 
 import (
+	"context"
+
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	"github.com/openshift/installer/pkg/asset"
@@ -31,7 +33,7 @@ func (a *SingleNodeBootstrapInPlace) Name() string {
 }
 
 // Generate generates the ignition config for the Bootstrap asset.
-func (a *SingleNodeBootstrapInPlace) Generate(dependencies asset.Parents) error {
+func (a *SingleNodeBootstrapInPlace) Generate(_ context.Context, dependencies asset.Parents) error {
 	installConfig := &installconfig.InstallConfig{}
 	dependencies.Get(installConfig)
 	if err := verifyBootstrapInPlace(installConfig.Config); err != nil {
@@ -41,10 +43,10 @@ func (a *SingleNodeBootstrapInPlace) Generate(dependencies asset.Parents) error 
 	if err := a.generateConfig(dependencies, templateData); err != nil {
 		return err
 	}
-	if err := a.addStorageFiles("/", "bootstrap/bootstrap-in-place/files", templateData); err != nil {
+	if err := AddStorageFiles(a.Config, "/", "bootstrap/bootstrap-in-place/files", templateData); err != nil {
 		return err
 	}
-	if err := a.addSystemdUnits("bootstrap/bootstrap-in-place/systemd/units", templateData, bootstrapInPlaceEnabledServices); err != nil {
+	if err := AddSystemdUnits(a.Config, "bootstrap/bootstrap-in-place/systemd/units", templateData, bootstrapInPlaceEnabledServices); err != nil {
 		return err
 	}
 	if err := a.Common.generateFile(singleNodeBootstrapInPlaceIgnFilename); err != nil {

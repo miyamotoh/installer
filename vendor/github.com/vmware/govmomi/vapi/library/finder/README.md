@@ -1,5 +1,5 @@
 # The content library finder
-The govmomi package now includes a finder for the content library, [`github.com/vmware/govmomi/vapi/library.Finder`](https://github.com/akutz/govmomi/blob/feature/content-library/vapi/library/finder/finder.go). This finder supports searching for objects in the content library using an inventory path design similar to the [standard govmomi finder](https://github.com/vmware/govmomi/blob/master/find/finder.go) and includes support for wildcard matching courtesy of golang's [`path.Match`](https://golang.org/pkg/path/#Match). For example:
+The govmomi package now includes a finder for the content library, [`github.com/vmware/govmomi/vapi/library.Finder`](https://github.com/akutz/govmomi/blob/feature/content-library/vapi/library/finder/finder.go). This finder supports searching for objects in the content library using an inventory path design similar to the [standard govmomi finder](https://github.com/vmware/govmomi/blob/main/find/finder.go) and includes support for wildcard matching courtesy of golang's [`path.Match`](https://golang.org/pkg/path/#Match). For example:
 
 | Pattern | Result |
 |---------|--------|
@@ -38,7 +38,8 @@ While a system that has few content library objects benefits from wildcard searc
 ## `govc library.ls`
 
 ### Listing all the objects in the content library
-```shell
+
+```console
 $ govc library.ls '*/*/'
 /ISOs/CentOS-7-x86_64-Minimal-1804/CentOS-7-x86_64-Minimal-1804.iso
 /ISOs/CoreOS Production/coreos_production_iso_image.iso
@@ -72,7 +73,8 @@ $ govc library.ls '*/*/'
 ## `govc library.info`
 
 ### Getting the info for all the objects in the content library
-```shell
+
+```console
 $ govc library.info '*/*/'
 Name:       CentOS-7-x86_64-Minimal-1804.iso
   Path:     /ISOs/CentOS-7-x86_64-Minimal-1804/CentOS-7-x86_64-Minimal-1804.iso

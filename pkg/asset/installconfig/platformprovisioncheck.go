@@ -2,28 +2,35 @@ package installconfig
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/util/validation/field"
+
+	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/installer/pkg/asset"
 	awsconfig "github.com/openshift/installer/pkg/asset/installconfig/aws"
 	azconfig "github.com/openshift/installer/pkg/asset/installconfig/azure"
 	bmconfig "github.com/openshift/installer/pkg/asset/installconfig/baremetal"
 	gcpconfig "github.com/openshift/installer/pkg/asset/installconfig/gcp"
 	ibmcloudconfig "github.com/openshift/installer/pkg/asset/installconfig/ibmcloud"
-	kubevirtconfig "github.com/openshift/installer/pkg/asset/installconfig/kubevirt"
+	nutanixconfig "github.com/openshift/installer/pkg/asset/installconfig/nutanix"
 	osconfig "github.com/openshift/installer/pkg/asset/installconfig/openstack"
 	ovirtconfig "github.com/openshift/installer/pkg/asset/installconfig/ovirt"
+	powervsconfig "github.com/openshift/installer/pkg/asset/installconfig/powervs"
 	vsconfig "github.com/openshift/installer/pkg/asset/installconfig/vsphere"
 	"github.com/openshift/installer/pkg/types/aws"
 	"github.com/openshift/installer/pkg/types/azure"
 	"github.com/openshift/installer/pkg/types/baremetal"
+	baremetalvalidation "github.com/openshift/installer/pkg/types/baremetal/validation"
+	"github.com/openshift/installer/pkg/types/external"
 	"github.com/openshift/installer/pkg/types/gcp"
 	"github.com/openshift/installer/pkg/types/ibmcloud"
-	"github.com/openshift/installer/pkg/types/kubevirt"
-	"github.com/openshift/installer/pkg/types/libvirt"
 	"github.com/openshift/installer/pkg/types/none"
+	"github.com/openshift/installer/pkg/types/nutanix"
 	"github.com/openshift/installer/pkg/types/openstack"
 	"github.com/openshift/installer/pkg/types/ovirt"
+	"github.com/openshift/installer/pkg/types/powervs"
 	"github.com/openshift/installer/pkg/types/vsphere"
 )
 
@@ -42,18 +49,27 @@ func (a *PlatformProvisionCheck) Dependencies() []asset.Asset {
 }
 
 // Generate queries for input from the user.
-func (a *PlatformProvisionCheck) Generate(dependencies asset.Parents) error {
+//
+//nolint:gocyclo
+func (a *PlatformProvisionCheck) Generate(ctx context.Context, dependencies asset.Parents) error {
 	ic := &InstallConfig{}
 	dependencies.Get(ic)
-	var err error
 	platform := ic.Config.Platform.Name()
+
+	// IPI requires MachineAPI capability
+	enabledCaps := ic.Config.GetEnabledCapabilities()
+	if !enabledCaps.Has(configv1.ClusterVersionCapabilityMachineAPI) {
+		return errors.New("IPI requires MachineAPI capability")
+	}
+
 	switch platform {
 	case aws.Name:
-		session, err := ic.AWS.Session(context.TODO())
+		session, err := ic.AWS.Session(ctx)
 		if err != nil {
 			return err
 		}
-		return awsconfig.ValidateForProvisioning(session, ic.Config, ic.AWS)
+		client := awsconfig.NewClient(session)
+		return awsconfig.ValidateForProvisioning(client, ic.Config, ic.AWS)
 	case azure.Name:
 		dnsConfig, err := ic.Azure.DNSConfig()
 		if err != nil {
@@ -69,58 +85,98 @@ func (a *PlatformProvisionCheck) Generate(dependencies asset.Parents) error {
 		}
 		return azconfig.ValidateForProvisioning(client, ic.Config)
 	case baremetal.Name:
+		err := bmconfig.ValidateBaremetalPlatformSet(ic.Config)
+		if err != nil {
+			return err
+		}
 		err = bmconfig.ValidateProvisioning(ic.Config)
 		if err != nil {
 			return err
 		}
-	case gcp.Name:
-		client, err := gcpconfig.NewClient(context.TODO())
+		err = bmconfig.ValidateStaticBootstrapNetworking(ic.Config)
 		if err != nil {
 			return err
 		}
-		err = gcpconfig.ValidatePreExitingPublicDNS(client, ic.Config)
+		err = baremetalvalidation.ValidateHosts(ic.Config.BareMetal, field.NewPath("platform"), ic.Config).ToAggregate()
+		if err != nil {
+			return err
+		}
+
+	case gcp.Name:
+		err := gcpconfig.ValidateForProvisioning(ic.Config)
 		if err != nil {
 			return err
 		}
 	case ibmcloud.Name:
-		client, err := ibmcloudconfig.NewClient()
+		client, err := ibmcloudconfig.NewClient(ic.Config.Platform.IBMCloud.ServiceEndpoints)
 		if err != nil {
 			return err
 		}
-		err = ibmcloudconfig.ValidatePreExitingPublicDNS(client, ic.Config, ic.IBMCloud)
+		metadata := ibmcloudconfig.NewMetadata(ic.Config)
+		err = ibmcloudconfig.ValidatePreExistingPublicDNS(client, ic.Config, metadata)
 		if err != nil {
 			return err
 		}
 	case openstack.Name:
-		err = osconfig.ValidateForProvisioning(ic.Config)
+		err := osconfig.ValidateForProvisioning(ic.Config)
 		if err != nil {
 			return err
 		}
 	case vsphere.Name:
-		err = vsconfig.ValidateForProvisioning(ic.Config)
-		if err != nil {
-			return err
-		}
-	case kubevirt.Name:
-		client, err := kubevirtconfig.NewClient()
-		if err != nil {
-			return err
-		}
-		err = kubevirtconfig.ValidateForProvisioning(client)
-		if err != nil {
+		if err := vsconfig.ValidateForProvisioning(ic.Config); err != nil {
 			return err
 		}
 	case ovirt.Name:
-		err = ovirtconfig.ValidateForProvisioning(ic.Config)
+		err := ovirtconfig.ValidateForProvisioning(ic.Config)
 		if err != nil {
 			return err
 		}
-	case libvirt.Name, none.Name:
+	case powervs.Name:
+		client, err := powervsconfig.NewClient()
+		if err != nil {
+			return err
+		}
+
+		err = powervsconfig.ValidatePERAvailability(client, ic.Config)
+		if err != nil {
+			return err
+		}
+
+		err = powervsconfig.ValidatePreExistingDNS(client, ic.Config, ic.PowerVS)
+		if err != nil {
+			return err
+		}
+
+		err = powervsconfig.ValidateCustomVPCSetup(client, ic.Config)
+		if err != nil {
+			return err
+		}
+
+		err = powervsconfig.ValidateResourceGroup(client, ic.Config)
+		if err != nil {
+			return err
+		}
+
+		err = powervsconfig.ValidateSystemTypeForRegion(client, ic.Config)
+		if err != nil {
+			return err
+		}
+
+		err = powervsconfig.ValidateServiceInstance(client, ic.Config)
+		if err != nil {
+			return err
+		}
+	case external.Name, none.Name:
 		// no special provisioning requirements to check
+	case nutanix.Name:
+		err := nutanixconfig.ValidateForProvisioning(ic.Config)
+		if err != nil {
+			return err
+		}
 	default:
-		err = fmt.Errorf("unknown platform type %q", platform)
+		return fmt.Errorf("unknown platform type %q", platform)
 	}
-	return err
+	return nil
 }
 
 // Name returns the human-friendly name of the asset.

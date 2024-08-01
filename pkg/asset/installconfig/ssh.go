@@ -1,8 +1,8 @@
 package installconfig
 
 import (
+	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -31,7 +31,7 @@ func (a *sshPublicKey) Dependencies() []asset.Asset {
 }
 
 func readSSHKey(path string) (string, error) {
-	keyAsBytes, err := ioutil.ReadFile(path)
+	keyAsBytes, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
@@ -47,7 +47,7 @@ func readSSHKey(path string) (string, error) {
 }
 
 // Generate generates the SSH public key asset.
-func (a *sshPublicKey) Generate(asset.Parents) error {
+func (a *sshPublicKey) Generate(context.Context, asset.Parents) error {
 	pubKeys := map[string]string{
 		noSSHKey: "",
 	}

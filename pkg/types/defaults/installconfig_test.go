@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"k8s.io/utils/pointer"
 
 	"github.com/openshift/installer/pkg/ipnet"
 	"github.com/openshift/installer/pkg/types"
@@ -12,8 +11,6 @@ import (
 	awsdefaults "github.com/openshift/installer/pkg/types/aws/defaults"
 	"github.com/openshift/installer/pkg/types/azure"
 	azuredefaults "github.com/openshift/installer/pkg/types/azure/defaults"
-	"github.com/openshift/installer/pkg/types/libvirt"
-	libvirtdefaults "github.com/openshift/installer/pkg/types/libvirt/defaults"
 	"github.com/openshift/installer/pkg/types/none"
 	nonedefaults "github.com/openshift/installer/pkg/types/none/defaults"
 	"github.com/openshift/installer/pkg/types/openstack"
@@ -24,9 +21,10 @@ import (
 
 func defaultInstallConfig() *types.InstallConfig {
 	return &types.InstallConfig{
+		AdditionalTrustBundlePolicy: defaultAdditionalTrustBundlePolicy(),
 		Networking: &types.Networking{
 			MachineNetwork: []types.MachineNetworkEntry{
-				{CIDR: *defaultMachineCIDR},
+				{CIDR: *DefaultMachineCIDR},
 			},
 			NetworkType:    defaultNetworkType,
 			ServiceNetwork: []ipnet.IPNet{*defaultServiceNetwork},
@@ -43,6 +41,12 @@ func defaultInstallConfig() *types.InstallConfig {
 	}
 }
 
+func defaultInstallConfigWithEdge() *types.InstallConfig {
+	c := defaultInstallConfig()
+	c.Compute = append(c.Compute, *defaultMachinePool("edge"))
+	return c
+}
+
 func defaultAWSInstallConfig() *types.InstallConfig {
 	c := defaultInstallConfig()
 	c.Platform.AWS = &aws.Platform{}
@@ -54,16 +58,6 @@ func defaultAzureInstallConfig() *types.InstallConfig {
 	c := defaultInstallConfig()
 	c.Platform.Azure = &azure.Platform{}
 	azuredefaults.SetPlatformDefaults(c.Platform.Azure)
-	return c
-}
-
-func defaultLibvirtInstallConfig() *types.InstallConfig {
-	c := defaultInstallConfig()
-	c.Networking.MachineNetwork[0].CIDR = *libvirtdefaults.DefaultMachineCIDR
-	c.Platform.Libvirt = &libvirt.Platform{}
-	libvirtdefaults.SetPlatformDefaults(c.Platform.Libvirt)
-	c.ControlPlane.Replicas = pointer.Int64Ptr(1)
-	c.Compute[0].Replicas = pointer.Int64Ptr(1)
 	return c
 }
 
@@ -83,6 +77,10 @@ func defaultOvirtInstallConfig() *types.InstallConfig {
 		ovirtdefaults.SetComputeDefaults(c.Platform.Ovirt, &c.Compute[i])
 	}
 	return c
+}
+
+func defaultAdditionalTrustBundlePolicy() types.PolicyType {
+	return types.PolicyProxyOnly
 }
 
 func defaultNoneInstallConfig() *types.InstallConfig {
@@ -120,15 +118,6 @@ func TestSetInstallConfigDefaults(t *testing.T) {
 				},
 			},
 			expected: defaultAzureInstallConfig(),
-		},
-		{
-			name: "empty Libvirt",
-			config: &types.InstallConfig{
-				Platform: types.Platform{
-					Libvirt: &libvirt.Platform{},
-				},
-			},
-			expected: defaultLibvirtInstallConfig(),
 		},
 		{
 			name: "empty OpenStack",
@@ -214,11 +203,25 @@ func TestSetInstallConfigDefaults(t *testing.T) {
 		{
 			name: "Compute present",
 			config: &types.InstallConfig{
-				Compute: []types.MachinePool{{Name: "test-compute"}},
+				Compute: []types.MachinePool{{Name: "worker"}},
 			},
 			expected: func() *types.InstallConfig {
 				c := defaultInstallConfig()
-				c.Compute = []types.MachinePool{*defaultMachinePool("test-compute")}
+				c.Compute = []types.MachinePool{*defaultMachinePool("worker")}
+				return c
+			}(),
+		},
+		{
+			name: "Edge Compute present",
+			config: &types.InstallConfig{
+				Compute: []types.MachinePool{{Name: "worker"}, {Name: "edge"}},
+			},
+			expected: func() *types.InstallConfig {
+				c := defaultInstallConfigWithEdge()
+				c.Compute = []types.MachinePool{
+					*defaultMachinePool("worker"),
+					*defaultEdgeMachinePool("edge"),
+				}
 				return c
 			}(),
 		},
@@ -243,21 +246,6 @@ func TestSetInstallConfigDefaults(t *testing.T) {
 			},
 			expected: func() *types.InstallConfig {
 				c := defaultAzureInstallConfig()
-				return c
-			}(),
-		},
-		{
-			name: "Libvirt platform present",
-			config: &types.InstallConfig{
-				Platform: types.Platform{
-					Libvirt: &libvirt.Platform{
-						URI: "test-uri",
-					},
-				},
-			},
-			expected: func() *types.InstallConfig {
-				c := defaultLibvirtInstallConfig()
-				c.Platform.Libvirt.URI = "test-uri"
 				return c
 			}(),
 		},

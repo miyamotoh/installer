@@ -1,14 +1,18 @@
 package openstack
 
 import (
-	"io/ioutil"
+	"context"
+	"os"
 	"strconv"
 	"strings"
 
-	"github.com/gophercloud/utils/openstack/clientconfig"
-	operv1 "github.com/openshift/api/operator/v1"
+	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/utils/v2/openstack/clientconfig"
+	networkutils "github.com/gophercloud/utils/v2/openstack/networking/v2/networks"
+
 	"github.com/openshift/installer/pkg/asset/installconfig/openstack"
 	"github.com/openshift/installer/pkg/types"
+	openstackdefaults "github.com/openshift/installer/pkg/types/openstack/defaults"
 )
 
 // Error represents a failure while generating OpenStack provider
@@ -73,7 +77,7 @@ func CloudProviderConfigSecret(cloud *clientconfig.Cloud) ([]byte, error) {
 	return []byte(res.String()), nil
 }
 
-func generateCloudProviderConfig(cloudConfig *clientconfig.Cloud, installConfig types.InstallConfig) (cloudProviderConfigData, cloudProviderConfigCABundleData string, err error) {
+func generateCloudProviderConfig(ctx context.Context, networkClient *gophercloud.ServiceClient, cloudConfig *clientconfig.Cloud, installConfig types.InstallConfig) (cloudProviderConfigData, cloudProviderConfigCABundleData string, err error) {
 	cloudProviderConfigData = `[Global]
 secret-name = openstack-credentials
 secret-namespace = kube-system
@@ -84,18 +88,22 @@ secret-namespace = kube-system
 
 	if caCertFile := cloudConfig.CACertFile; caCertFile != "" {
 		cloudProviderConfigData += "ca-file = /etc/kubernetes/static-pod-resources/configmaps/cloud-config/ca-bundle.pem\n"
-		caFile, err := ioutil.ReadFile(caCertFile)
+		caFile, err := os.ReadFile(caCertFile)
 		if err != nil {
 			return "", "", Error{err, "failed to read clouds.yaml ca-cert from disk"}
 		}
 		cloudProviderConfigCABundleData = string(caFile)
 	}
 
-	cloudProviderConfigData += "[LoadBalancer]\n"
-	if installConfig.NetworkType == string(operv1.NetworkTypeKuryr) {
-		cloudProviderConfigData += "use-octavia = False\n"
-	} else {
-		cloudProviderConfigData += "use-octavia = True\n"
+	if installConfig.OpenStack.ExternalNetwork != "" {
+		networkName := installConfig.OpenStack.ExternalNetwork // Yes, we use a name in install-config.yaml :/
+		networkID, err := networkutils.IDFromName(ctx, networkClient, networkName)
+		if err != nil {
+			return "", "", Error{err, "failed to fetch external network " + networkName}
+		}
+		// If set get the ID and configure CCM to use that network for LB FIPs.
+		cloudProviderConfigData += "\n[LoadBalancer]\n"
+		cloudProviderConfigData += "floating-network-id = " + networkID + "\n"
 	}
 
 	return cloudProviderConfigData, cloudProviderConfigCABundleData, nil
@@ -103,11 +111,16 @@ secret-namespace = kube-system
 
 // GenerateCloudProviderConfig adds the cloud provider config for the OpenStack
 // platform in the provided configmap.
-func GenerateCloudProviderConfig(installConfig types.InstallConfig) (cloudProviderConfigData, cloudProviderConfigCABundleData string, err error) {
-	cloud, err := openstack.GetSession(installConfig.Platform.OpenStack.Cloud)
+func GenerateCloudProviderConfig(ctx context.Context, installConfig types.InstallConfig) (cloudProviderConfigData, cloudProviderConfigCABundleData string, err error) {
+	session, err := openstack.GetSession(installConfig.Platform.OpenStack.Cloud)
 	if err != nil {
 		return "", "", Error{err, "failed to get cloud config for openstack"}
 	}
 
-	return generateCloudProviderConfig(cloud.CloudConfig, installConfig)
+	networkClient, err := openstackdefaults.NewServiceClient(ctx, "network", session.ClientOpts)
+	if err != nil {
+		return "", "", Error{err, "failed to create a network client"}
+	}
+
+	return generateCloudProviderConfig(ctx, networkClient, session.CloudConfig, installConfig)
 }

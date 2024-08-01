@@ -1,8 +1,8 @@
 package asset
 
 import (
+	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,7 +20,7 @@ func (a *persistAsset) Dependencies() []Asset {
 	return []Asset{}
 }
 
-func (a *persistAsset) Generate(Parents) error {
+func (a *persistAsset) Generate(context.Context, Parents) error {
 	return nil
 }
 
@@ -61,11 +61,7 @@ func TestPersistToFile(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dir, err := ioutil.TempDir("", "TestStatePersistToFile")
-			if err != nil {
-				t.Skipf("could not create temporary directory: %v", err)
-			}
-			defer os.RemoveAll(dir)
+			dir := t.TempDir()
 
 			asset := &writablePersistAsset{
 				FileList: make([]*File, len(tc.filenames)),
@@ -79,7 +75,7 @@ func TestPersistToFile(t *testing.T) {
 				}
 				expectedFiles[filepath.Join(dir, filename)] = data
 			}
-			err = PersistToFile(asset, dir)
+			err := PersistToFile(asset, dir)
 			assert.NoError(t, err, "unexpected error persisting state to file")
 			verifyFilesCreated(t, dir, expectedFiles)
 		})
@@ -87,7 +83,7 @@ func TestPersistToFile(t *testing.T) {
 }
 
 func verifyFilesCreated(t *testing.T, dir string, expectedFiles map[string][]byte) {
-	dirContents, err := ioutil.ReadDir(dir)
+	dirContents, err := os.ReadDir(dir)
 	assert.NoError(t, err, "could not read contents of directory %q", dir)
 	for _, fileinfo := range dirContents {
 		fullPath := filepath.Join(dir, fileinfo.Name())
@@ -99,7 +95,7 @@ func verifyFilesCreated(t *testing.T, dir string, expectedFiles map[string][]byt
 				t.Errorf("Unexpected file created: %v", fullPath)
 				continue
 			}
-			actualData, err := ioutil.ReadFile(fullPath)
+			actualData, err := os.ReadFile(fullPath)
 			assert.NoError(t, err, "unexpected error reading created file %q", fullPath)
 			assert.Equal(t, expectedData, actualData, "unexpected data in created file %q", fullPath)
 			delete(expectedFiles, fullPath)

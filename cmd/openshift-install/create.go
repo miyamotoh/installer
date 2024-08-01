@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"crypto/x509"
-	"io/ioutil"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,10 +14,16 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
@@ -24,10 +31,18 @@ import (
 	clientwatch "k8s.io/client-go/tools/watch"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	configclient "github.com/openshift/client-go/config/clientset/versioned"
+	configinformers "github.com/openshift/client-go/config/informers/externalversions"
+	configlisters "github.com/openshift/client-go/config/listers/config/v1"
 	routeclient "github.com/openshift/client-go/route/clientset/versioned"
+	"github.com/openshift/installer/cmd/openshift-install/command"
 	"github.com/openshift/installer/pkg/asset"
+	"github.com/openshift/installer/pkg/asset/agent/agentconfig"
+	"github.com/openshift/installer/pkg/asset/cluster"
 	"github.com/openshift/installer/pkg/asset/installconfig"
+	"github.com/openshift/installer/pkg/asset/kubeconfig"
+	"github.com/openshift/installer/pkg/asset/lbconfig"
 	"github.com/openshift/installer/pkg/asset/logging"
 	assetstore "github.com/openshift/installer/pkg/asset/store"
 	targetassets "github.com/openshift/installer/pkg/asset/targets"
@@ -35,6 +50,9 @@ import (
 	"github.com/openshift/installer/pkg/gather/service"
 	timer "github.com/openshift/installer/pkg/metrics/timer"
 	"github.com/openshift/installer/pkg/types/baremetal"
+	"github.com/openshift/installer/pkg/types/gcp"
+	"github.com/openshift/installer/pkg/types/vsphere"
+	baremetalutils "github.com/openshift/installer/pkg/utils/baremetal"
 	cov1helpers "github.com/openshift/library-go/pkg/config/clusteroperator/v1helpers"
 	"github.com/openshift/library-go/pkg/route/routeapihelpers"
 )
@@ -44,6 +62,21 @@ type target struct {
 	command *cobra.Command
 	assets  []asset.WritableAsset
 }
+
+const (
+	exitCodeInstallConfigError = iota + 3
+	exitCodeInfrastructureFailed
+	exitCodeBootstrapFailed
+	exitCodeInstallFailed
+	exitCodeOperatorStabilityFailed
+	exitCodeInterrupt
+
+	// coStabilityThreshold is how long a cluster operator must have Progressing=False
+	// in order to be considered stable. Measured in seconds.
+	coStabilityThreshold float64 = 30
+)
+
+var skipPasswordPrintFlag bool
 
 // each target is a variable to preserve the order when creating subcommands and still
 // allow other functions to directly access each target individually.
@@ -80,6 +113,7 @@ var (
 		},
 		assets: targetassets.IgnitionConfigs,
 	}
+
 	singleNodeIgnitionConfigTarget = target{
 		name: "Single Node Ignition Config",
 		command: &cobra.Command{
@@ -98,60 +132,17 @@ var (
 			Short: "Create an OpenShift cluster",
 			// FIXME: add longer descriptions for our commands with examples for better UX.
 			// Long:  "",
-			PostRun: func(_ *cobra.Command, _ []string) {
-				ctx := context.Background()
+			PostRun: func(cmd *cobra.Command, _ []string) {
+				// Get the context that was set in newCreateCmd.
+				ctx := cmd.Context()
 
-				cleanup := setupFileHook(rootOpts.dir)
-				defer cleanup()
-
-				// FIXME: pulling the kubeconfig and metadata out of the root
-				// directory is a bit cludgy when we already have them in memory.
-				config, err := clientcmd.BuildConfigFromFlags("", filepath.Join(rootOpts.dir, "auth", "kubeconfig"))
+				exitCode, err := clusterCreatePostRun(ctx)
 				if err != nil {
-					logrus.Fatal(errors.Wrap(err, "loading kubeconfig"))
-				}
-
-				timer.StartTimer("Bootstrap Complete")
-				if err := waitForBootstrapComplete(ctx, config); err != nil {
-					if err2 := logClusterOperatorConditions(ctx, config); err2 != nil {
-						logrus.Error("Attempted to gather ClusterOperator status after installation failure: ", err2)
-					}
-					bundlePath, err2 := runGatherBootstrapCmd(rootOpts.dir)
-					if err2 != nil {
-						logrus.Error("Attempted to gather debug logs after installation failure: ", err2)
-					}
-					logrus.Error("Bootstrap failed to complete: ", err.Unwrap())
-					logrus.Error(err.Error())
-					if err2 := service.AnalyzeGatherBundle(bundlePath); err2 != nil {
-						logrus.Error("Attempted to analyze the debug logs after installation failure: ", err2)
-					}
-					logrus.Fatal("Bootstrap failed to complete")
-				}
-				timer.StopTimer("Bootstrap Complete")
-				timer.StartTimer("Bootstrap Destroy")
-
-				if oi, ok := os.LookupEnv("OPENSHIFT_INSTALL_PRESERVE_BOOTSTRAP"); ok && oi != "" {
-					logrus.Warn("OPENSHIFT_INSTALL_PRESERVE_BOOTSTRAP is set, not destroying bootstrap resources. " +
-						"Warning: this should only be used for debugging purposes, and poses a risk to cluster stability.")
-				} else {
-					logrus.Info("Destroying the bootstrap resources...")
-					err = destroybootstrap.Destroy(rootOpts.dir)
-					if err != nil {
-						logrus.Fatal(err)
-					}
-				}
-				timer.StopTimer("Bootstrap Destroy")
-
-				err = waitForInstallComplete(ctx, config, rootOpts.dir)
-				if err != nil {
-					if err2 := logClusterOperatorConditions(ctx, config); err2 != nil {
-						logrus.Error("Attempted to gather ClusterOperator status after installation failure: ", err2)
-					}
-					logTroubleshootingLink()
 					logrus.Fatal(err)
 				}
-				timer.StopTimer(timer.TotalTimeElapsed)
-				timer.LogSummary()
+				if exitCode != 0 {
+					logrus.Exit(exitCode)
+				}
 			},
 		},
 		assets: targetassets.Cluster,
@@ -159,6 +150,85 @@ var (
 
 	targets = []target{installConfigTarget, manifestsTarget, ignitionConfigsTarget, clusterTarget, singleNodeIgnitionConfigTarget}
 )
+
+// clusterCreatePostRun is the main entrypoint for the cluster create command
+// it was moved out of the clusterTarget.command.PostRun function to allow cleanup operations to always
+// run in a defer statement, given that we had multiple exit points in the function, like logrus.Fatal or logrus.Exit.
+//
+// Currently this function returns an exit code and an error, we should refactor this to only return an error,
+// that can be wrapped if we want a custom exit code.
+func clusterCreatePostRun(ctx context.Context) (int, error) {
+	cleanup := command.SetupFileHook(command.RootOpts.Dir)
+	defer cleanup()
+
+	// FIXME: pulling the kubeconfig and metadata out of the root
+	// directory is a bit cludgy when we already have them in memory.
+	config, err := clientcmd.BuildConfigFromFlags("", filepath.Join(command.RootOpts.Dir, "auth", "kubeconfig"))
+	if err != nil {
+		return 0, errors.Wrap(err, "loading kubeconfig")
+	}
+
+	// Handle the case when the API server is not reachable.
+	if err := handleUnreachableAPIServer(ctx, config); err != nil {
+		logrus.Fatal(fmt.Errorf("unable to handle api server override: %w", err))
+	}
+
+	//
+	// Wait for the bootstrap to complete.
+	//
+	timer.StartTimer("Bootstrap Complete")
+	if err := waitForBootstrapComplete(ctx, config); err != nil {
+		bundlePath, gatherErr := runGatherBootstrapCmd(ctx, command.RootOpts.Dir)
+		if gatherErr != nil {
+			logrus.Error("Attempted to gather debug logs after installation failure: ", gatherErr)
+		}
+		if err := logClusterOperatorConditions(ctx, config); err != nil {
+			logrus.Error("Attempted to gather ClusterOperator status after installation failure: ", err)
+		}
+		logrus.Error("Bootstrap failed to complete: ", err.Unwrap())
+		logrus.Error(err.Error())
+		if gatherErr == nil {
+			if err := service.AnalyzeGatherBundle(bundlePath); err != nil {
+				logrus.Error("Attempted to analyze the debug logs after installation failure: ", err)
+			}
+			logrus.Infof("Bootstrap gather logs captured here %q", bundlePath)
+		}
+		return exitCodeBootstrapFailed, nil
+	}
+	timer.StopTimer("Bootstrap Complete")
+
+	//
+	// Wait for the bootstrap to be destroyed.
+	//
+	timer.StartTimer("Bootstrap Destroy")
+	if oi, ok := os.LookupEnv("OPENSHIFT_INSTALL_PRESERVE_BOOTSTRAP"); ok && oi != "" {
+		logrus.Warn("OPENSHIFT_INSTALL_PRESERVE_BOOTSTRAP is set, not destroying bootstrap resources. " +
+			"Warning: this should only be used for debugging purposes, and poses a risk to cluster stability.")
+	} else {
+		logrus.Info("Destroying the bootstrap resources...")
+		err = destroybootstrap.Destroy(ctx, command.RootOpts.Dir)
+		if err != nil {
+			return 0, err
+		}
+	}
+	timer.StopTimer("Bootstrap Destroy")
+
+	//
+	// Wait for the cluster to initialize.
+	//
+	err = waitForInstallComplete(ctx, config, command.RootOpts.Dir)
+	if err != nil {
+		if err2 := logClusterOperatorConditions(ctx, config); err2 != nil {
+			logrus.Error("Attempted to gather ClusterOperator status after installation failure: ", err2)
+		}
+		logTroubleshootingLink()
+		logrus.Error(err)
+		return exitCodeInstallFailed, nil
+	}
+	timer.StopTimer(timer.TotalTimeElapsed)
+	timer.LogSummary()
+	return 0, nil
+}
 
 // clusterCreateError defines a custom error type that would help identify where the error occurs
 // during the bootstrap phase of the installation process. This would help identify whether the error
@@ -209,7 +279,7 @@ func newClientError(errorInfo error) *clusterCreateError {
 	}
 }
 
-func newCreateCmd() *cobra.Command {
+func newCreateCmd(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create part of an OpenShift cluster",
@@ -220,56 +290,50 @@ func newCreateCmd() *cobra.Command {
 
 	for _, t := range targets {
 		t.command.Args = cobra.ExactArgs(0)
-		t.command.Run = runTargetCmd(t.assets...)
+		t.command.Run = runTargetCmd(ctx, t.assets...)
+		if t.name == "Cluster" {
+			t.command.PersistentFlags().BoolVar(&skipPasswordPrintFlag, "skip-password-print", false, "Do not print the generated user password.")
+		}
 		cmd.AddCommand(t.command)
 	}
 
 	return cmd
 }
 
-func runTargetCmd(targets ...asset.WritableAsset) func(cmd *cobra.Command, args []string) {
+func runTargetCmd(ctx context.Context, targets ...asset.WritableAsset) func(cmd *cobra.Command, args []string) {
 	runner := func(directory string) error {
-		assetStore, err := assetstore.NewStore(directory)
-		if err != nil {
-			return errors.Wrap(err, "failed to create asset store")
-		}
-
-		for _, a := range targets {
-			err := assetStore.Fetch(a, targets...)
-			if err != nil {
-				err = errors.Wrapf(err, "failed to fetch %s", a.Name())
-			}
-
-			if err2 := asset.PersistToFile(a, directory); err2 != nil {
-				err2 = errors.Wrapf(err2, "failed to write asset (%s) to disk", a.Name())
-				if err != nil {
-					logrus.Error(err2)
-					return err
-				}
-				return err2
-			}
-
-			if err != nil {
-				return err
-			}
-		}
-		return nil
+		fetcher := assetstore.NewAssetsFetcher(directory)
+		return fetcher.FetchAndPersist(ctx, targets)
 	}
 
 	return func(cmd *cobra.Command, args []string) {
 		timer.StartTimer(timer.TotalTimeElapsed)
 
-		cleanup := setupFileHook(rootOpts.dir)
+		// Set the context to be used in the PostRun function.
+		cmd.SetContext(ctx)
+
+		cleanup := command.SetupFileHook(command.RootOpts.Dir)
 		defer cleanup()
 
-		err := runner(rootOpts.dir)
+		cluster.InstallDir = command.RootOpts.Dir
+
+		err := runner(command.RootOpts.Dir)
 		if err != nil {
+			if strings.Contains(err.Error(), asset.InstallConfigError) {
+				logrus.Error(err)
+				logrus.Exit(exitCodeInstallConfigError)
+			}
+			if strings.Contains(err.Error(), asset.ClusterCreationError) {
+				logrus.Error(err)
+				logrus.Exit(exitCodeInfrastructureFailed)
+			}
 			logrus.Fatal(err)
 		}
-		if cmd.Name() != "cluster" {
-			logrus.Infof(logging.LogCreatedFiles(cmd.Name(), rootOpts.dir, targets))
+		switch cmd.Name() {
+		case "cluster", "image", "pxe-files":
+		default:
+			logrus.Infof(logging.LogCreatedFiles(cmd.Name(), command.RootOpts.Dir, targets))
 		}
-
 	}
 }
 
@@ -328,7 +392,11 @@ func waitForBootstrapComplete(ctx context.Context, config *rest.Config) *cluster
 	discovery := client.Discovery()
 
 	apiTimeout := 20 * time.Minute
-	logrus.Infof("Waiting up to %v for the Kubernetes API at %s...", apiTimeout, config.Host)
+
+	untilTime := time.Now().Add(apiTimeout)
+	timezone, _ := untilTime.Zone()
+	logrus.Infof("Waiting up to %v (until %v %s) for the Kubernetes API at %s...",
+		apiTimeout, untilTime.Format(time.Kitchen), timezone, config.Host)
 
 	apiContext, cancel := context.WithTimeout(ctx, apiTimeout)
 	defer cancel()
@@ -339,51 +407,89 @@ func waitForBootstrapComplete(ctx context.Context, config *rest.Config) *cluster
 	silenceRemaining := logDownsample
 	previousErrorSuffix := ""
 	timer.StartTimer("API")
+
+	if assetStore, err := assetstore.NewStore(command.RootOpts.Dir); err == nil {
+		checkIfAgentCommand(assetStore)
+	}
+
 	var lastErr error
-	wait.Until(func() {
+	err = wait.PollUntilContextCancel(apiContext, 2*time.Second, true, func(_ context.Context) (done bool, err error) {
 		version, err := discovery.ServerVersion()
 		if err == nil {
 			logrus.Infof("API %s up", version)
 			timer.StopTimer("API")
-			cancel()
-		} else {
-			lastErr = err
-			silenceRemaining--
-			chunks := strings.Split(err.Error(), ":")
-			errorSuffix := chunks[len(chunks)-1]
-			if previousErrorSuffix != errorSuffix {
-				logrus.Debugf("Still waiting for the Kubernetes API: %v", err)
-				previousErrorSuffix = errorSuffix
-				silenceRemaining = logDownsample
-			} else if silenceRemaining == 0 {
-				logrus.Debugf("Still waiting for the Kubernetes API: %v", err)
-				silenceRemaining = logDownsample
-			}
+			return true, nil
 		}
-	}, 2*time.Second, apiContext.Done())
-	err = apiContext.Err()
-	if err != nil && err != context.Canceled {
+
+		lastErr = err
+		silenceRemaining--
+		chunks := strings.Split(err.Error(), ":")
+		errorSuffix := chunks[len(chunks)-1]
+		if previousErrorSuffix != errorSuffix {
+			logrus.Debugf("Still waiting for the Kubernetes API: %v", err)
+			previousErrorSuffix = errorSuffix
+			silenceRemaining = logDownsample
+		} else if silenceRemaining == 0 {
+			logrus.Debugf("Still waiting for the Kubernetes API: %v", err)
+			silenceRemaining = logDownsample
+		}
+
+		return false, nil
+	})
+	if err != nil {
 		if lastErr != nil {
 			return newAPIError(lastErr)
 		}
 		return newAPIError(err)
 	}
 
-	return waitForBootstrapConfigMap(ctx, client)
+	var platformName string
+
+	if assetStore, err := assetstore.NewStore(command.RootOpts.Dir); err == nil {
+		if installConfig, err := assetStore.Load(&installconfig.InstallConfig{}); err == nil && installConfig != nil {
+			platformName = installConfig.(*installconfig.InstallConfig).Config.Platform.Name()
+		}
+	}
+
+	timeout := 45 * time.Minute
+
+	// Wait longer for baremetal, VSphere due to length of time it takes to boot
+	if platformName == baremetal.Name || platformName == vsphere.Name {
+		timeout = 60 * time.Minute
+	}
+
+	untilTime = time.Now().Add(timeout)
+	timezone, _ = untilTime.Zone()
+	logrus.Infof("Waiting up to %v (until %v %s) for bootstrapping to complete...",
+		timeout, untilTime.Format(time.Kitchen), timezone)
+
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	if platformName == baremetal.Name {
+		if err := baremetalutils.WaitForBaremetalBootstrapControlPlane(waitCtx, config, command.RootOpts.Dir); err != nil {
+			return newBootstrapError(err)
+		}
+		logrus.Infof("  Baremetal control plane finished provisioning.")
+	}
+
+	if err := waitForBootstrapConfigMap(waitCtx, client); err != nil {
+		return err
+	}
+
+	if err := waitForStableSNOBootstrap(ctx, config); err != nil {
+		return newBootstrapError(err)
+	}
+
+	return nil
 }
 
 // waitForBootstrapConfigMap watches the configmaps in the kube-system namespace
 // and waits for the bootstrap configmap to report that bootstrapping has
 // completed.
 func waitForBootstrapConfigMap(ctx context.Context, client *kubernetes.Clientset) *clusterCreateError {
-	timeout := 30 * time.Minute
-	logrus.Infof("Waiting up to %v for bootstrapping to complete...", timeout)
-
-	waitCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
 	_, err := clientwatch.UntilWithSync(
-		waitCtx,
+		ctx,
 		cache.NewListWatchFromClient(client.CoreV1().RESTClient(), "configmaps", "kube-system", fields.OneTermEqualSelector("metadata.name", "bootstrap")),
 		&corev1.ConfigMap{},
 		nil,
@@ -413,6 +519,64 @@ func waitForBootstrapConfigMap(ctx context.Context, client *kubernetes.Clientset
 	return nil
 }
 
+// When bootstrap on SNO deployments, we should not remove the bootstrap node prematurely,
+// here we make sure that the deployment is stable.
+// Given the nature of single node we just need to make sure things such as etcd are in the proper state
+// before continuing.
+func waitForStableSNOBootstrap(ctx context.Context, config *rest.Config) error {
+	timeout := 5 * time.Minute
+
+	// If we're not in a single node deployment, bail early
+	if isSNO, err := IsSingleNode(); err != nil {
+		logrus.Warningf("Can not determine if installing a Single Node cluster, continuing as normal install: %v", err)
+		return nil
+	} else if !isSNO {
+		return nil
+	}
+
+	snoBootstrapContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	untilTime := time.Now().Add(timeout)
+	timezone, _ := untilTime.Zone()
+	logrus.Info("Detected Single Node deployment")
+	logrus.Infof("Waiting up to %v (until %v %s) for the bootstrap etcd member to be removed...",
+		timeout, untilTime.Format(time.Kitchen), timezone)
+
+	client, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("error creating dynamic client: %w", err)
+	}
+	gvr := schema.GroupVersionResource{
+		Group:    operatorv1.SchemeGroupVersion.Group,
+		Version:  operatorv1.SchemeGroupVersion.Version,
+		Resource: "etcds",
+	}
+	resourceClient := client.Resource(gvr)
+	// Validate the etcd operator has removed the bootstrap etcd member
+	return wait.PollUntilContextCancel(snoBootstrapContext, 1*time.Second, true, func(ctx context.Context) (done bool, err error) {
+		etcdOperator := &operatorv1.Etcd{}
+		etcdUnstructured, err := resourceClient.Get(ctx, "cluster", metav1.GetOptions{})
+		if err != nil {
+			// There might be service disruptions in SNO, we log those here but keep trying with in the time limit
+			logrus.Debugf("Error getting ETCD Cluster resource, retrying: %v", err)
+			return false, nil
+		}
+		err = runtime.DefaultUnstructuredConverter.FromUnstructured(etcdUnstructured.Object, etcdOperator)
+		if err != nil {
+			// This error should not happen, if we do, we log the error and keep retrying until we hit the limit
+			logrus.Debugf("Error parsing etcds resource, retrying: %v", err)
+			return false, nil
+		}
+		for _, condition := range etcdOperator.Status.Conditions {
+			if condition.Type == "EtcdBootstrapMemberRemoved" {
+				return configv1.ConditionStatus(condition.Status) == configv1.ConditionTrue, nil
+			}
+		}
+		return false, nil
+	})
+}
+
 // waitForInitializedCluster watches the ClusterVersion waiting for confirmation
 // that the cluster has been initialized.
 func waitForInitializedCluster(ctx context.Context, config *rest.Config) error {
@@ -420,15 +584,20 @@ func waitForInitializedCluster(ctx context.Context, config *rest.Config) error {
 	timeout := 40 * time.Minute
 
 	// Wait longer for baremetal, due to length of time it takes to boot
-	if assetStore, err := assetstore.NewStore(rootOpts.dir); err == nil {
+	if assetStore, err := assetstore.NewStore(command.RootOpts.Dir); err == nil {
 		if installConfig, err := assetStore.Load(&installconfig.InstallConfig{}); err == nil && installConfig != nil {
 			if installConfig.(*installconfig.InstallConfig).Config.Platform.Name() == baremetal.Name {
 				timeout = 60 * time.Minute
 			}
 		}
+
+		checkIfAgentCommand(assetStore)
 	}
 
-	logrus.Infof("Waiting up to %v for the cluster at %s to initialize...", timeout, config.Host)
+	untilTime := time.Now().Add(timeout)
+	timezone, _ := untilTime.Zone()
+	logrus.Infof("Waiting up to %v (until %v %s) for the cluster at %s to initialize...",
+		timeout, untilTime.Format(time.Kitchen), timezone, config.Host)
 	cc, err := configclient.NewForConfig(config)
 	if err != nil {
 		return errors.Wrap(err, "failed to create a config client")
@@ -437,7 +606,7 @@ func waitForInitializedCluster(ctx context.Context, config *rest.Config) error {
 	defer cancel()
 
 	failing := configv1.ClusterStatusConditionType("Failing")
-	timer.StartTimer("Cluster Operators")
+	timer.StartTimer("Cluster Operators Available")
 	var lastError string
 	_, err = clientwatch.UntilWithSync(
 		clusterVersionContext,
@@ -452,8 +621,10 @@ func waitForInitializedCluster(ctx context.Context, config *rest.Config) error {
 					logrus.Warnf("Expected a ClusterVersion object but got a %q object instead", event.Object.GetObjectKind().GroupVersionKind())
 					return false, nil
 				}
-				if cov1helpers.IsStatusConditionTrue(cv.Status.Conditions, configv1.OperatorAvailable) {
-					timer.StopTimer("Cluster Operators")
+				if cov1helpers.IsStatusConditionTrue(cv.Status.Conditions, configv1.OperatorAvailable) &&
+					cov1helpers.IsStatusConditionFalse(cv.Status.Conditions, failing) &&
+					cov1helpers.IsStatusConditionFalse(cv.Status.Conditions, configv1.OperatorProgressing) {
+					timer.StopTimer("Cluster Operators Available")
 					return true, nil
 				}
 				if cov1helpers.IsStatusConditionTrue(cv.Status.Conditions, failing) {
@@ -485,8 +656,56 @@ func waitForInitializedCluster(ctx context.Context, config *rest.Config) error {
 	return errors.Wrap(err, "failed to initialize the cluster")
 }
 
-// waitForConsole returns the console URL from the route 'console' in namespace openshift-console
-func waitForConsole(ctx context.Context, config *rest.Config) (string, error) {
+// waitForStableOperators ensures that each cluster operator is "stable", i.e. the
+// operator has not been in a progressing state for at least a certain duration,
+// 30 seconds by default. Returns an error if any operator does meet this threshold
+// after a deadline, 30 minutes by default.
+func waitForStableOperators(ctx context.Context, config *rest.Config) error {
+	timer.StartTimer("Cluster Operators Stable")
+
+	stabilityCheckDuration := 30 * time.Minute
+	stabilityContext, cancel := context.WithTimeout(ctx, stabilityCheckDuration)
+	defer cancel()
+
+	untilTime := time.Now().Add(stabilityCheckDuration)
+	timezone, _ := untilTime.Zone()
+	logrus.Infof("Waiting up to %v (until %v %s) to ensure each cluster operator has finished progressing...",
+		stabilityCheckDuration, untilTime.Format(time.Kitchen), timezone)
+
+	cc, err := configclient.NewForConfig(config)
+	if err != nil {
+		return errors.Wrap(err, "failed to create a config client")
+	}
+	configInformers := configinformers.NewSharedInformerFactory(cc, 0)
+	clusterOperatorInformer := configInformers.Config().V1().ClusterOperators().Informer()
+	clusterOperatorLister := configInformers.Config().V1().ClusterOperators().Lister()
+	configInformers.Start(ctx.Done())
+	if !cache.WaitForCacheSync(ctx.Done(), clusterOperatorInformer.HasSynced) {
+		return fmt.Errorf("informers never started")
+	}
+
+	waitErr := wait.PollUntilContextCancel(stabilityContext, 1*time.Second, true, waitForAllClusterOperators(clusterOperatorLister))
+	if waitErr != nil {
+		logrus.Errorf("Error checking cluster operator Progressing status: %q", waitErr)
+		stableOperators, unstableOperators, err := currentOperatorStability(clusterOperatorLister)
+		if err != nil {
+			logrus.Errorf("Error checking final cluster operator Progressing status: %q", err)
+		}
+		logrus.Debugf("These cluster operators were stable: [%s]", strings.Join(sets.List(stableOperators), ", "))
+		logrus.Errorf("These cluster operators were not stable: [%s]", strings.Join(sets.List(unstableOperators), ", "))
+
+		logrus.Exit(exitCodeOperatorStabilityFailed)
+	}
+
+	timer.StopTimer("Cluster Operators Stable")
+
+	logrus.Info("All cluster operators have completed progressing")
+
+	return nil
+}
+
+// getConsole returns the console URL from the route 'console' in namespace openshift-console
+func getConsole(ctx context.Context, config *rest.Config) (string, error) {
 	url := ""
 	// Need to keep these updated if they change
 	consoleNamespace := "openshift-console"
@@ -496,8 +715,8 @@ func waitForConsole(ctx context.Context, config *rest.Config) (string, error) {
 		return "", errors.Wrap(err, "creating a route client")
 	}
 
-	consoleRouteTimeout := 10 * time.Minute
-	logrus.Infof("Waiting up to %v for the openshift-console route to be created...", consoleRouteTimeout)
+	consoleRouteTimeout := 2 * time.Minute
+	logrus.Infof("Checking to see if there is a route at %s/%s...", consoleNamespace, consoleRouteName)
 	consoleRouteContext, cancel := context.WithTimeout(ctx, consoleRouteTimeout)
 	defer cancel()
 	// Poll quickly but only log when the response
@@ -517,7 +736,11 @@ func waitForConsole(ctx context.Context, config *rest.Config) (string, error) {
 			} else {
 				err = err2
 			}
+		} else if apierrors.IsNotFound(err) {
+			logrus.Debug("OpenShift console route does not exist")
+			cancel()
 		}
+
 		if err != nil {
 			silenceRemaining--
 			if silenceRemaining == 0 {
@@ -545,14 +768,20 @@ func logComplete(directory, consoleURL string) error {
 	}
 	kubeconfig := filepath.Join(absDir, "auth", "kubeconfig")
 	pwFile := filepath.Join(absDir, "auth", "kubeadmin-password")
-	pw, err := ioutil.ReadFile(pwFile)
+	pw, err := os.ReadFile(pwFile)
 	if err != nil {
 		return err
 	}
 	logrus.Info("Install complete!")
 	logrus.Infof("To access the cluster as the system:admin user when using 'oc', run 'export KUBECONFIG=%s'", kubeconfig)
-	logrus.Infof("Access the OpenShift web-console here: %s", consoleURL)
-	logrus.Infof("Login to the console with user: %q, and password: %q", "kubeadmin", pw)
+	if consoleURL != "" {
+		logrus.Infof("Access the OpenShift web-console here: %s", consoleURL)
+		if skipPasswordPrintFlag {
+			logrus.Infof("Credentials omitted, if necessary verify the %s file", pwFile)
+		} else {
+			logrus.Infof("Login to the console with user: %q, and password: %q", "kubeadmin", pw)
+		}
+	}
 	return nil
 }
 
@@ -561,16 +790,20 @@ func waitForInstallComplete(ctx context.Context, config *rest.Config, directory 
 		return err
 	}
 
-	consoleURL, err := waitForConsole(ctx, config)
+	if err := addRouterCAToClusterCA(ctx, config, command.RootOpts.Dir); err != nil {
+		return err
+	}
+
+	if err := waitForStableOperators(ctx, config); err != nil {
+		return err
+	}
+
+	consoleURL, err := getConsole(ctx, config)
 	if err != nil {
-		return err
+		logrus.Warnf("Cluster does not have a console available: %v", err)
 	}
 
-	if err = addRouterCAToClusterCA(ctx, config, rootOpts.dir); err != nil {
-		return err
-	}
-
-	return logComplete(rootOpts.dir, consoleURL)
+	return logComplete(command.RootOpts.Dir, consoleURL)
 }
 
 func logTroubleshootingLink() {
@@ -578,4 +811,146 @@ func logTroubleshootingLink() {
 The cluster should be accessible for troubleshooting as detailed in the documentation linked below,
 https://docs.openshift.com/container-platform/latest/support/troubleshooting/troubleshooting-installations.html
 The 'wait-for install-complete' subcommand can then be used to continue the installation`)
+}
+
+func checkIfAgentCommand(assetStore asset.Store) {
+	if agentConfig, err := assetStore.Load(&agentconfig.AgentConfig{}); err == nil && agentConfig != nil {
+		logrus.Warning("An agent configuration was detected but this command is not the agent wait-for command")
+	}
+}
+
+func waitForAllClusterOperators(clusterOperatorLister configlisters.ClusterOperatorLister) func(ctx context.Context) (bool, error) {
+	previouslyStableOperators := sets.Set[string]{}
+
+	return func(ctx context.Context) (bool, error) {
+		stableOperators, unstableOperators, err := currentOperatorStability(clusterOperatorLister)
+		if err != nil {
+			return false, err
+		}
+		if newlyStableOperators := stableOperators.Difference(previouslyStableOperators); len(newlyStableOperators) > 0 {
+			for _, name := range sets.List(newlyStableOperators) {
+				logrus.Debugf("Cluster Operator %s is stable", name)
+			}
+		}
+		if newlyUnstableOperators := previouslyStableOperators.Difference(stableOperators); len(newlyUnstableOperators) > 0 {
+			for _, name := range sets.List(newlyUnstableOperators) {
+				logrus.Debugf("Cluster Operator %s became unstable", name)
+			}
+		}
+		previouslyStableOperators = stableOperators
+
+		if len(unstableOperators) == 0 {
+			return true, nil
+		}
+
+		return false, nil
+	}
+}
+
+func currentOperatorStability(clusterOperatorLister configlisters.ClusterOperatorLister) (sets.Set[string], sets.Set[string], error) {
+	clusterOperators, err := clusterOperatorLister.List(labels.Everything())
+	if err != nil {
+		return nil, nil, err // lister should never fail
+	}
+
+	stableOperators := sets.Set[string]{}
+	unstableOperators := sets.Set[string]{}
+	for _, clusterOperator := range clusterOperators {
+		name := clusterOperator.Name
+		progressing := cov1helpers.FindStatusCondition(clusterOperator.Status.Conditions, configv1.OperatorProgressing)
+		if progressing == nil {
+			logrus.Debugf("Cluster Operator %s progressing == nil", name)
+			unstableOperators.Insert(name)
+			continue
+		}
+		if meetsStabilityThreshold(progressing) {
+			stableOperators.Insert(name)
+		} else {
+			logrus.Debugf("Cluster Operator %s is Progressing=%s LastTransitionTime=%v DurationSinceTransition=%.fs Reason=%s Message=%s", name, progressing.Status, progressing.LastTransitionTime.Time, time.Since(progressing.LastTransitionTime.Time).Seconds(), progressing.Reason, progressing.Message)
+			unstableOperators.Insert(name)
+		}
+	}
+
+	return stableOperators, unstableOperators, nil
+}
+
+func meetsStabilityThreshold(progressing *configv1.ClusterOperatorStatusCondition) bool {
+	return progressing.Status == configv1.ConditionFalse && time.Since(progressing.LastTransitionTime.Time).Seconds() > coStabilityThreshold
+}
+
+func handleUnreachableAPIServer(ctx context.Context, config *rest.Config) error {
+	assetStore, err := assetstore.NewStore(command.RootOpts.Dir)
+	if err != nil {
+		return fmt.Errorf("failed to create asset store: %w", err)
+	}
+
+	// Ensure that the install is expecting the user to provision their own DNS solution.
+	installConfig := &installconfig.InstallConfig{}
+	if err := assetStore.Fetch(ctx, installConfig); err != nil {
+		return fmt.Errorf("failed to fetch %s: %w", installConfig.Name(), err)
+	}
+	switch installConfig.Config.Platform.Name() { //nolint:gocritic
+	case gcp.Name:
+		if installConfig.Config.GCP.UserProvisionedDNS != gcp.UserProvisionedDNSEnabled {
+			return nil
+		}
+	default:
+		return nil
+	}
+
+	lbConfig := &lbconfig.Config{}
+	if err := assetStore.Fetch(ctx, lbConfig); err != nil {
+		return fmt.Errorf("failed to fetch %s: %w", lbConfig.Name(), err)
+	}
+
+	_, ipAddrs, err := lbConfig.ParseDNSDataFromConfig(lbconfig.PublicLoadBalancer)
+	if err != nil {
+		return fmt.Errorf("failed to parse lbconfig: %w", err)
+	}
+
+	// The kubeconfig handles one ip address
+	ipAddr := ""
+	if len(ipAddrs) > 0 {
+		ipAddr = ipAddrs[0].String()
+	}
+	if ipAddr == "" {
+		return fmt.Errorf("no ip address found in lbconfig")
+	}
+
+	dialer := &net.Dialer{
+		Timeout:   1 * time.Minute,
+		KeepAlive: 1 * time.Minute,
+	}
+	config.Dial = kubeconfig.CreateDialContext(dialer, ipAddr)
+
+	// The asset is currently saved in <install-dir>/openshift. This directory
+	// was consumed during install but this file is generated after that action. This
+	// artifact will hang around unless it is purged here.
+	if err := asset.DeleteAssetFromDisk(lbConfig, command.RootOpts.Dir); err != nil {
+		return fmt.Errorf("failed to delete %s from disk", lbConfig.Name())
+	}
+
+	return nil
+}
+
+// IsSingleNode determines if we are in a single node configuration based off of the install config
+// loaded from the asset store.
+func IsSingleNode() (bool, error) {
+	assetStore, err := assetstore.NewStore(command.RootOpts.Dir)
+	if err != nil {
+		return false, fmt.Errorf("error loading asset store: %w", err)
+	}
+	installConfig, err := assetStore.Load(&installconfig.InstallConfig{})
+	if err != nil {
+		return false, fmt.Errorf("error loading installConfig: %w", err)
+	}
+	if installConfig == nil {
+		return false, fmt.Errorf("installConfig loaded from asset store was nil")
+	}
+
+	config := installConfig.(*installconfig.InstallConfig).Config
+	if machinePool := config.ControlPlane; machinePool != nil {
+		return *machinePool.Replicas == int64(1), nil
+	}
+	return false, nil
 }

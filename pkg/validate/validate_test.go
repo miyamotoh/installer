@@ -49,6 +49,28 @@ func TestClusterName(t *testing.T) {
 	}
 }
 
+func TestOnPremClusterName(t *testing.T) {
+	cases := []struct {
+		name        string
+		clusterName string
+		valid       bool
+	}{
+		{"single lowercase", "a", true},
+		{"has a dot", "a.a", false},
+		{"valid name", "abcde", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := OnPremClusterName(tc.clusterName)
+			if tc.valid {
+				assert.NoError(t, err)
+			} else {
+				assert.Error(t, err)
+			}
+		})
+	}
+}
+
 func TestClusterName1035(t *testing.T) {
 	maxSizeName := "a" + strings.Repeat("123456789.", 5) + "123"
 
@@ -101,7 +123,7 @@ func TestVCenter(t *testing.T) {
 		{"single lowercase", "a", true},
 		{"single uppercase", "A", false},
 		{"contains whitespace", "abc D", false},
-		{"single number", "1", false},
+		{"single number", "1", true},
 		{"single dot", ".", false},
 		{"ends with dot", "a.", false},
 		{"starts with dot", ".a", false},
@@ -115,7 +137,6 @@ func TestVCenter(t *testing.T) {
 		{"contains non-ascii", "a日本語a", false},
 		{"URLs", "https://hello.openshift.org", false},
 		{"IP", "192.168.1.1", true},
-		{"invalid IP", "192.168.1", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -11,6 +11,8 @@ import (
 
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/networking-go-sdk/dnsrecordsv1"
+	"github.com/IBM/networking-go-sdk/dnssvcsv1"
+	"github.com/IBM/networking-go-sdk/dnszonesv1"
 	"github.com/IBM/networking-go-sdk/zonesv1"
 	"github.com/IBM/platform-services-go-sdk/iampolicymanagementv1"
 	"github.com/IBM/platform-services-go-sdk/resourcecontrollerv2"
@@ -21,8 +23,11 @@ import (
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 
+	configv1 "github.com/openshift/api/config/v1"
+	icibmcloud "github.com/openshift/installer/pkg/asset/installconfig/ibmcloud"
 	"github.com/openshift/installer/pkg/destroy/providers"
 	"github.com/openshift/installer/pkg/types"
+	ibmcloudtypes "github.com/openshift/installer/pkg/types/ibmcloud"
 	"github.com/openshift/installer/pkg/version"
 )
 
@@ -39,6 +44,7 @@ type ClusterUninstaller struct {
 	AccountID           string
 	BaseDomain          string
 	CISInstanceCRN      string
+	DNSInstanceID       string
 	Region              string
 	ResourceGroupName   string
 	UserProvidedSubnets []string
@@ -49,10 +55,18 @@ type ClusterUninstaller struct {
 	vpcSvc                 *vpcv1.VpcV1
 	iamPolicyManagementSvc *iampolicymanagementv1.IamPolicyManagementV1
 	zonesSvc               *zonesv1.ZonesV1
+	dnsZonesSvc            *dnszonesv1.DnsZonesV1
+	dnsServicesSvc         *dnssvcsv1.DnsSvcsV1
 	dnsRecordsSvc          *dnsrecordsv1.DnsRecordsV1
+	maxRetryAttempt        int
+	serviceEndpoints       []configv1.IBMCloudServiceEndpoint
+
+	// Cache endpoint override for IBM Cloud IAM, if one was provided in serviceEndpoints
+	iamServiceEndpointOverride string
 
 	resourceGroupID string
 	cosInstanceID   string
+	zoneID          string
 
 	errorTracker
 	pendingItemTracker
@@ -60,7 +74,7 @@ type ClusterUninstaller struct {
 
 // New returns an IBMCloud destroyer from ClusterMetadata.
 func New(logger logrus.FieldLogger, metadata *types.ClusterMetadata) (providers.Destroyer, error) {
-	return &ClusterUninstaller{
+	cUninstaller := &ClusterUninstaller{
 		ClusterName:         metadata.ClusterName,
 		Context:             context.Background(),
 		Logger:              logger,
@@ -68,27 +82,62 @@ func New(logger logrus.FieldLogger, metadata *types.ClusterMetadata) (providers.
 		AccountID:           metadata.ClusterPlatformMetadata.IBMCloud.AccountID,
 		BaseDomain:          metadata.ClusterPlatformMetadata.IBMCloud.BaseDomain,
 		CISInstanceCRN:      metadata.ClusterPlatformMetadata.IBMCloud.CISInstanceCRN,
+		DNSInstanceID:       metadata.ClusterPlatformMetadata.IBMCloud.DNSInstanceID,
 		Region:              metadata.ClusterPlatformMetadata.IBMCloud.Region,
 		ResourceGroupName:   metadata.ClusterPlatformMetadata.IBMCloud.ResourceGroupName,
+		serviceEndpoints:    metadata.ClusterPlatformMetadata.IBMCloud.ServiceEndpoints,
 		UserProvidedSubnets: metadata.ClusterPlatformMetadata.IBMCloud.Subnets,
 		UserProvidedVPC:     metadata.ClusterPlatformMetadata.IBMCloud.VPC,
 		pendingItemTracker:  newPendingItemTracker(),
-	}, nil
+		maxRetryAttempt:     30,
+	}
+
+	for _, endpoint := range cUninstaller.serviceEndpoints {
+		if endpoint.Name == configv1.IBMCloudServiceIAM {
+			cUninstaller.iamServiceEndpointOverride = endpoint.URL
+			break
+		}
+	}
+
+	return cUninstaller, nil
+}
+
+// Retry ...
+func (o *ClusterUninstaller) Retry(funcToRetry func() (error, bool)) error {
+	var err error
+	var stopRetry bool
+	retryGap := 10
+	for i := 0; i < o.maxRetryAttempt; i++ {
+		if i > 0 {
+			time.Sleep(time.Duration(retryGap) * time.Second)
+		}
+		// Call function which required retry, retry is decided by function itself
+		err, stopRetry = funcToRetry()
+		if stopRetry {
+			break
+		}
+
+		if (i + 1) < o.maxRetryAttempt {
+			o.Logger.Infof("UNEXPECTED RESULT, Re-attempting execution .., attempt=%d, retry-gap=%d, max-retry-Attempts=%d, stopRetry=%t, error=%v", i+1,
+				retryGap, o.maxRetryAttempt, stopRetry, err)
+		}
+	}
+	return err
 }
 
 // Run is the entrypoint to start the uninstall process
-func (o *ClusterUninstaller) Run() error {
+func (o *ClusterUninstaller) Run() (*types.ClusterQuota, error) {
 	err := o.loadSDKServices()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	err = o.destroyCluster()
 	if err != nil {
-		return errors.Wrap(err, "failed to destroy cluster")
+		return nil, errors.Wrap(err, "failed to destroy cluster")
 	}
 
-	return nil
+	return nil, nil
 }
 
 func (o *ClusterUninstaller) destroyCluster() error {
@@ -98,22 +147,33 @@ func (o *ClusterUninstaller) destroyCluster() error {
 	}{{
 		{name: "Stop instances", execute: o.stopInstances},
 	}, {
+		// Instances must occur before LB cleanup
 		{name: "Instances", execute: o.destroyInstances},
-		{name: "IAM Authorizations", execute: o.destroyIAMAuthorizations},
+		{name: "Disks", execute: o.destroyDisks},
 	}, {
+		// LB's must occur before Subnet cleanup
 		{name: "Load Balancers", execute: o.destroyLoadBalancers},
 	}, {
 		{name: "Subnets", execute: o.destroySubnets},
 	}, {
+		// Public Gateways must occur before FIP's cleanup
+		// Security Groups must occur before VPC cleanup
 		{name: "Images", execute: o.destroyImages},
 		{name: "Public Gateways", execute: o.destroyPublicGateways},
 		{name: "Security Groups", execute: o.destroySecurityGroups},
 	}, {
 		{name: "Floating IPs", execute: o.destroyFloatingIPs},
 	}, {
+		{name: "Dedicated Hosts", execute: o.destroyDedicatedHosts},
 		{name: "VPCs", execute: o.destroyVPCs},
 	}, {
+		// IAM must occur before COS cleanup
+		{name: "IAM Authorizations", execute: o.destroyIAMAuthorizations},
+	}, {
+		// COS must occur before RG cleanup
 		{name: "Cloud Object Storage Instances", execute: o.destroyCOSInstances},
+		{name: "Dedicated Host Groups", execute: o.destroyDedicatedHostGroups},
+	}, {
 		{name: "DNS Records", execute: o.destroyDNSRecords},
 		{name: "Resource Groups", execute: o.destroyResourceGroups},
 	}}
@@ -171,86 +231,173 @@ func (o *ClusterUninstaller) executeStageFunction(f struct {
 
 func (o *ClusterUninstaller) loadSDKServices() error {
 	apiKey := os.Getenv("IC_API_KEY")
-	authenticator := &core.IamAuthenticator{
-		ApiKey: apiKey,
-	}
-
-	err := authenticator.Validate()
-	if err != nil {
-		return err
-	}
 
 	userAgentString := fmt.Sprintf("OpenShift/4.x Destroyer/%s", version.Raw)
 
 	// ResourceManagerV2
-	o.managementSvc, err = resourcemanagerv2.NewResourceManagerV2(&resourcemanagerv2.ResourceManagerV2Options{
-		Authenticator: authenticator,
-	})
+	rmAuthenticator, err := icibmcloud.NewIamAuthenticator(apiKey, o.iamServiceEndpointOverride)
+	if err != nil {
+		return err
+	}
+	rmOptions := &resourcemanagerv2.ResourceManagerV2Options{
+		Authenticator: rmAuthenticator,
+	}
+	if overrideURL := ibmcloudtypes.CheckServiceEndpointOverride(configv1.IBMCloudServiceResourceManager, o.serviceEndpoints); overrideURL != "" {
+		rmOptions.URL = overrideURL
+	}
+	o.managementSvc, err = resourcemanagerv2.NewResourceManagerV2(rmOptions)
 	if err != nil {
 		return err
 	}
 	o.managementSvc.Service.SetUserAgent(userAgentString)
 
+	// Attempt to retrieve the ResourceGroupID as soon as possible to validate ResourceGroupName
+	_, err = o.ResourceGroupID()
+	if err != nil {
+		return err
+	}
+
 	// ResourceControllerV2
-	o.controllerSvc, err = resourcecontrollerv2.NewResourceControllerV2(&resourcecontrollerv2.ResourceControllerV2Options{
-		Authenticator: authenticator,
-	})
+	rcAuthenticator, err := icibmcloud.NewIamAuthenticator(apiKey, o.iamServiceEndpointOverride)
+	if err != nil {
+		return err
+	}
+	rcOptions := &resourcecontrollerv2.ResourceControllerV2Options{
+		Authenticator: rcAuthenticator,
+	}
+	if overrideURL := ibmcloudtypes.CheckServiceEndpointOverride(configv1.IBMCloudServiceResourceController, o.serviceEndpoints); overrideURL != "" {
+		rcOptions.URL = overrideURL
+	}
+	o.controllerSvc, err = resourcecontrollerv2.NewResourceControllerV2(rcOptions)
 	if err != nil {
 		return err
 	}
 	o.controllerSvc.Service.SetUserAgent(userAgentString)
 
 	// IamPolicyManagementV1
-	o.iamPolicyManagementSvc, err = iampolicymanagementv1.NewIamPolicyManagementV1(&iampolicymanagementv1.IamPolicyManagementV1Options{
-		Authenticator: authenticator,
-	})
+	ipmAuthenticator, err := icibmcloud.NewIamAuthenticator(apiKey, o.iamServiceEndpointOverride)
+	if err != nil {
+		return err
+	}
+	ipmOptions := &iampolicymanagementv1.IamPolicyManagementV1Options{
+		Authenticator: ipmAuthenticator,
+	}
+	if o.iamServiceEndpointOverride != "" {
+		ipmOptions.URL = o.iamServiceEndpointOverride
+	}
+	o.iamPolicyManagementSvc, err = iampolicymanagementv1.NewIamPolicyManagementV1(ipmOptions)
 	if err != nil {
 		return err
 	}
 	o.iamPolicyManagementSvc.Service.SetUserAgent(userAgentString)
 
-	// ZonesV1
-	o.zonesSvc, err = zonesv1.NewZonesV1(&zonesv1.ZonesV1Options{
-		Authenticator: authenticator,
-		Crn:           core.StringPtr(o.CISInstanceCRN),
-	})
-	if err != nil {
-		return err
-	}
-	o.zonesSvc.Service.SetUserAgent(userAgentString)
-
-	// Get the Zone ID
-	options := o.zonesSvc.NewListZonesOptions()
-	resources, _, err := o.zonesSvc.ListZonesWithContext(o.Context, options)
-	if err != nil {
-		return err
-	}
-
-	zoneID := ""
-	for _, zone := range resources.Result {
-		if strings.Contains(o.BaseDomain, *zone.Name) {
-			zoneID = *zone.ID
+	if len(o.CISInstanceCRN) > 0 {
+		// ZonesV1
+		zAuthenticator, err := icibmcloud.NewIamAuthenticator(apiKey, o.iamServiceEndpointOverride)
+		if err != nil {
+			return err
 		}
-	}
-	if zoneID == "" || err != nil {
-		return errors.Errorf("Could not determine DNS zone ID from base domain %q", o.BaseDomain)
-	}
+		zonesOptions := &zonesv1.ZonesV1Options{
+			Authenticator: zAuthenticator,
+			Crn:           core.StringPtr(o.CISInstanceCRN),
+		}
+		// Check for CIS override endpoint once for zonesv1 and dnsrecordsv1 API calls
+		overrideURL := ibmcloudtypes.CheckServiceEndpointOverride(configv1.IBMCloudServiceCIS, o.serviceEndpoints)
+		if overrideURL != "" {
+			zonesOptions.URL = overrideURL
+		}
+		o.zonesSvc, err = zonesv1.NewZonesV1(zonesOptions)
+		if err != nil {
+			return err
+		}
+		o.zonesSvc.Service.SetUserAgent(userAgentString)
 
-	// DnsRecordsV1
-	o.dnsRecordsSvc, err = dnsrecordsv1.NewDnsRecordsV1(&dnsrecordsv1.DnsRecordsV1Options{
-		Authenticator:  authenticator,
-		Crn:            core.StringPtr(o.CISInstanceCRN),
-		ZoneIdentifier: core.StringPtr(zoneID),
-	})
-	if err != nil {
-		return err
+		// Get the Zone ID
+		options := o.zonesSvc.NewListZonesOptions()
+		resources, _, err := o.zonesSvc.ListZonesWithContext(o.Context, options)
+		if err != nil {
+			return err
+		}
+
+		zoneID := ""
+		for _, zone := range resources.Result {
+			if strings.Contains(o.BaseDomain, *zone.Name) {
+				zoneID = *zone.ID
+			}
+		}
+		if zoneID == "" {
+			return errors.Errorf("Could not determine CIS DNS zone ID from base domain %q", o.BaseDomain)
+		}
+
+		// DnsRecordsV1
+		dnsAuthenticator, err := icibmcloud.NewIamAuthenticator(apiKey, o.iamServiceEndpointOverride)
+		if err != nil {
+			return err
+		}
+		dnsRecordsOptions := &dnsrecordsv1.DnsRecordsV1Options{
+			Authenticator:  dnsAuthenticator,
+			Crn:            core.StringPtr(o.CISInstanceCRN),
+			ZoneIdentifier: core.StringPtr(zoneID),
+		}
+		if overrideURL != "" {
+			dnsRecordsOptions.URL = overrideURL
+		}
+		o.dnsRecordsSvc, err = dnsrecordsv1.NewDnsRecordsV1(dnsRecordsOptions)
+		if err != nil {
+			return err
+		}
+		o.dnsRecordsSvc.Service.SetUserAgent(userAgentString)
+	} else if len(o.DNSInstanceID) > 0 {
+		// DnsSvcsV1
+		dnsAuthenticator, err := icibmcloud.NewIamAuthenticator(apiKey, o.iamServiceEndpointOverride)
+		if err != nil {
+			return err
+		}
+		dnssvcsOptions := &dnssvcsv1.DnsSvcsV1Options{
+			Authenticator: dnsAuthenticator,
+		}
+		if overrideURL := ibmcloudtypes.CheckServiceEndpointOverride(configv1.IBMCloudServiceDNSServices, o.serviceEndpoints); overrideURL != "" {
+			dnssvcsOptions.URL = overrideURL
+		}
+		o.dnsServicesSvc, err = dnssvcsv1.NewDnsSvcsV1(dnssvcsOptions)
+		if err != nil {
+			return err
+		}
+		o.dnsServicesSvc.Service.SetUserAgent(userAgentString)
+
+		// Get the Zone ID
+		dzOptions := o.dnsServicesSvc.NewListDnszonesOptions(o.DNSInstanceID)
+		dzResult, _, err := o.dnsServicesSvc.ListDnszonesWithContext(o.Context, dzOptions)
+		if err != nil {
+			return err
+		}
+
+		zoneID := ""
+		for _, zone := range dzResult.Dnszones {
+			if o.BaseDomain == *zone.Name {
+				zoneID = *zone.ID
+				break
+			}
+		}
+		if zoneID == "" {
+			return errors.Errorf("Could not determine DNS Services DNS zone ID from base domain %q", o.BaseDomain)
+		}
+		o.Logger.Debugf("Found DNS Services DNS zone ID for base domain %q: %s", o.BaseDomain, zoneID)
+		o.zoneID = zoneID
 	}
-	o.dnsRecordsSvc.Service.SetUserAgent(userAgentString)
 
 	// VpcV1
-	o.vpcSvc, err = vpcv1.NewVpcV1(&vpcv1.VpcV1Options{
-		Authenticator: authenticator,
-	})
+	vpcAuthenticator, err := icibmcloud.NewIamAuthenticator(apiKey, o.iamServiceEndpointOverride)
+	if err != nil {
+		return err
+	}
+	vpcOptions := &vpcv1.VpcV1Options{
+		Authenticator: vpcAuthenticator,
+	}
+	if overrideURL := ibmcloudtypes.CheckServiceEndpointOverride(configv1.IBMCloudServiceVPC, o.serviceEndpoints); overrideURL != "" {
+		vpcOptions.URL = overrideURL
+	}
+	o.vpcSvc, err = vpcv1.NewVpcV1(vpcOptions)
 	if err != nil {
 		return err
 	}
@@ -279,6 +426,11 @@ func (o *ClusterUninstaller) ResourceGroupID() (string, error) {
 		return o.resourceGroupID, nil
 	}
 
+	// If no ResourceGroupName is available, raise an error
+	if o.ResourceGroupName == "" {
+		return "", errors.Errorf("No ResourceGroupName provided")
+	}
+
 	ctx, cancel := o.contextWithTimeout()
 	defer cancel()
 
@@ -289,7 +441,9 @@ func (o *ClusterUninstaller) ResourceGroupID() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(resources.Resources) > 1 {
+	if len(resources.Resources) == 0 {
+		return "", errors.Errorf("ResourceGroup '%q' not found", o.ResourceGroupName)
+	} else if len(resources.Resources) > 1 {
 		return "", errors.Errorf("Too many resource groups matched name %q", o.ResourceGroupName)
 	}
 
@@ -383,4 +537,8 @@ func (t pendingItemTracker) deletePendingItems(itemType string, items []cloudRes
 
 func isErrorStatus(code int64) bool {
 	return code != 0 && (code < 200 || code >= 300)
+}
+
+func (o *ClusterUninstaller) clusterLabelFilter() string {
+	return fmt.Sprintf("kubernetes-io-cluster-%s:owned", o.InfraID)
 }

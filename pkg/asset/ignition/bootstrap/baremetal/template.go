@@ -5,15 +5,17 @@ import (
 	"net"
 	"strings"
 
+	utilsnet "k8s.io/utils/net"
+
 	"github.com/openshift/installer/pkg/types"
 	"github.com/openshift/installer/pkg/types/baremetal"
 )
 
 // TemplateData holds data specific to templates used for the baremetal platform.
 type TemplateData struct {
-	// ProvisioningInterface holds the interface the bootstrap node will use to host the ProvisioningIP below.
-	// When the provisioning network is disabled, this is the external baremetal network interface.
-	ProvisioningInterface string
+	// ProvisioningInterfaceMAC holds the interface's MAC address that the bootstrap node will use to host the ProvisioningIP below.
+	// When the provisioning network is disabled, this is the external baremetal network MAC address.
+	ProvisioningInterfaceMAC string
 
 	// ProvisioningIP holds the IP the bootstrap node will use to service Ironic, TFTP, etc.
 	ProvisioningIP string
@@ -46,21 +48,92 @@ type TemplateData struct {
 
 	// BaremetalIntrospectionEndpointOverride contains the url for the baremetal introspection endpoint
 	BaremetalIntrospectionEndpointOverride string
+
+	// ClusterOSImage contains 4 URLs to download RHCOS live iso, kernel, rootfs and initramfs
+	ClusterOSImage string
+
+	// API VIP for use by ironic during bootstrap.
+	APIVIPs []string
+
+	// Hosts is the information needed to create the objects in Ironic.
+	Hosts []*baremetal.Host
+
+	// How many of the Hosts are control plane machines?
+	ControlPlaneReplicas int64
+
+	// ProvisioningNetwork displays the type of provisioning network being used
+	ProvisioningNetwork string
+
+	// ExternalStaticIP is the static IP of the bootstrap node
+	ExternalStaticIP string
+
+	// ExternalStaticIP is the static gateway of the bootstrap node
+	ExternalStaticGateway string
+
+	// ExternalStaticDNS is the static DNS of the bootstrap node
+	ExternalStaticDNS string
+
+	ExternalSubnetCIDR int
+
+	ExternalMACAddress string
+
+	// ExternalURLv6 is a callback URL for the node if the node and the BMC use different network families
+	ExternalURLv6 string
+}
+
+func externalURLs(apiVIPs []string) (externalURLv4 string, externalURLv6 string) {
+	if len(apiVIPs) > 1 {
+		// IPv6 BMCs may not be able to reach IPv4 servers, use the right callback URL for them.
+		// Warning: when backporting to 4.12 or earlier, change the port to 80!
+		externalURL := fmt.Sprintf("http://%s/", net.JoinHostPort(apiVIPs[1], "6180"))
+		if utilsnet.IsIPv6String(apiVIPs[1]) {
+			externalURLv6 = externalURL
+		}
+		if utilsnet.IsIPv4String(apiVIPs[1]) {
+			externalURLv4 = externalURL
+		}
+	}
+
+	return
 }
 
 // GetTemplateData returns platform-specific data for bootstrap templates.
-func GetTemplateData(config *baremetal.Platform, networks []types.MachineNetworkEntry, ironicUsername, ironicPassword string) *TemplateData {
+func GetTemplateData(config *baremetal.Platform, networks []types.MachineNetworkEntry, controlPlaneReplicaCount int64, ironicUsername, ironicPassword string) *TemplateData {
 	var templateData TemplateData
 
+	templateData.Hosts = config.Hosts
+	templateData.ControlPlaneReplicas = controlPlaneReplicaCount
+
 	templateData.ProvisioningIP = config.BootstrapProvisioningIP
-	templateData.BaremetalEndpointOverride = fmt.Sprintf("http://%s/v1", net.JoinHostPort(config.APIVIP, "6385"))
-	templateData.BaremetalIntrospectionEndpointOverride = fmt.Sprintf("http://%s/v1", net.JoinHostPort(config.APIVIP, "5050"))
+	templateData.ProvisioningNetwork = string(config.ProvisioningNetwork)
+	templateData.ExternalStaticIP = config.BootstrapExternalStaticIP
+	templateData.ExternalStaticGateway = config.BootstrapExternalStaticGateway
+	templateData.ExternalStaticDNS = config.BootstrapExternalStaticDNS
+	templateData.ExternalMACAddress = config.ExternalMACAddress
+
+	_, externalURLv6 := externalURLs(config.APIVIPs)
+
+	templateData.ExternalURLv6 = externalURLv6
+
+	if len(config.APIVIPs) > 0 {
+		templateData.APIVIPs = config.APIVIPs
+		templateData.BaremetalEndpointOverride = fmt.Sprintf("http://%s/v1", net.JoinHostPort(config.APIVIPs[0], "6385"))
+		templateData.BaremetalIntrospectionEndpointOverride = fmt.Sprintf("http://%s/v1", net.JoinHostPort(config.APIVIPs[0], "5050"))
+	}
+
+	if config.BootstrapExternalStaticIP != "" {
+		for _, network := range networks {
+			cidr, _ := network.CIDR.Mask.Size()
+			templateData.ExternalSubnetCIDR = cidr
+			break
+		}
+	}
 
 	if config.ProvisioningNetwork != baremetal.DisabledProvisioningNetwork {
 		cidr, _ := config.ProvisioningNetworkCIDR.Mask.Size()
 		templateData.ProvisioningCIDR = cidr
 		templateData.ProvisioningIPv6 = config.ProvisioningNetworkCIDR.IP.To4() == nil
-		templateData.ProvisioningInterface = "ens4"
+		templateData.ProvisioningInterfaceMAC = config.ProvisioningMACAddress
 		templateData.ProvisioningDNSMasq = true
 	}
 
@@ -74,13 +147,13 @@ func GetTemplateData(config *baremetal.Platform, networks []types.MachineNetwork
 
 		var dhcpAllowList []string
 		for _, host := range config.Hosts {
-			if host.Role == "master" {
+			if host.IsMaster() {
 				dhcpAllowList = append(dhcpAllowList, host.BootMACAddress)
 			}
 		}
 		templateData.ProvisioningDHCPAllowList = strings.Join(dhcpAllowList, " ")
 	case baremetal.DisabledProvisioningNetwork:
-		templateData.ProvisioningInterface = "ens3"
+		templateData.ProvisioningInterfaceMAC = config.ExternalMACAddress
 		templateData.ProvisioningDNSMasq = false
 
 		if templateData.ProvisioningIP != "" {
@@ -97,6 +170,7 @@ func GetTemplateData(config *baremetal.Platform, networks []types.MachineNetwork
 
 	templateData.IronicUsername = ironicUsername
 	templateData.IronicPassword = ironicPassword
+	templateData.ClusterOSImage = config.ClusterOSImage
 
 	return &templateData
 }

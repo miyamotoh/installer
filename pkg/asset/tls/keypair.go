@@ -1,8 +1,11 @@
 package tls
 
 import (
-	"github.com/openshift/installer/pkg/asset"
+	"context"
+
 	"github.com/pkg/errors"
+
+	"github.com/openshift/installer/pkg/asset"
 )
 
 // KeyPairInterface contains a private key and a public key.
@@ -21,7 +24,7 @@ type KeyPair struct {
 }
 
 // Generate generates the rsa private / public key pair.
-func (k *KeyPair) Generate(filenameBase string) error {
+func (k *KeyPair) Generate(_ context.Context, filenameBase string) error {
 	key, err := PrivateKey()
 	if err != nil {
 		return errors.Wrap(err, "failed to generate private key")

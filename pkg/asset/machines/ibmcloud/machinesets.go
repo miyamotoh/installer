@@ -4,17 +4,17 @@ import (
 	"fmt"
 	"strings"
 
-	machineapi "github.com/openshift/machine-api-operator/pkg/apis/machine/v1beta1"
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
+	machineapi "github.com/openshift/api/machine/v1beta1"
 	"github.com/openshift/installer/pkg/types"
 	"github.com/openshift/installer/pkg/types/ibmcloud"
 )
 
 // MachineSets returns a list of machinesets for a machinepool.
-func MachineSets(clusterID string, config *types.InstallConfig, pool *types.MachinePool, role, userDataSecret string) ([]*machineapi.MachineSet, error) {
+func MachineSets(clusterID string, config *types.InstallConfig, subnets map[string]string, pool *types.MachinePool, role, userDataSecret string) ([]*machineapi.MachineSet, error) {
 	if configPlatform := config.Platform.Name(); configPlatform != ibmcloud.Name {
 		return nil, fmt.Errorf("non-IBMCloud configuration: %q", configPlatform)
 	}
@@ -37,7 +37,7 @@ func MachineSets(clusterID string, config *types.InstallConfig, pool *types.Mach
 			replicas++
 		}
 
-		provider, err := provider(clusterID, platform, mpool, idx, role, userDataSecret)
+		provider, err := provider(clusterID, platform, subnets, mpool, idx, role, userDataSecret)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to create provider")
 		}

@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
+	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/installer/pkg/types/ibmcloud"
 )
 
@@ -62,91 +63,159 @@ func TestValidatePlatform(t *testing.T) {
 			valid: true,
 		},
 		{
-			name: "valid vpc config",
+			name: "valid vpc and subnets",
 			platform: func() *ibmcloud.Platform {
 				p := validMinimalPlatform()
-				p.VPC = "valid-vpc-name"
-				p.Subnets = []string{"valid-compute-subnet-id", "valid-control-subnet-id"}
-				p.VPCResourceGroupName = "vpc-rg-name"
+				p.VPCName = "valid-vpc-subnets"
+				p.ControlPlaneSubnets = []string{"cp-1", "cp-2", "cp-3"}
+				p.ComputeSubnets = []string{"comp-1", "comp-2"}
 				return p
 			}(),
 			valid: true,
 		},
 		{
-			name: "invalid vpc config missing vpc",
+			name: "vpc without control plane subnet",
 			platform: func() *ibmcloud.Platform {
 				p := validMinimalPlatform()
-				p.Subnets = []string{"valid-compute-subnet-id", "valid-control-subnet-id"}
-				p.VPCResourceGroupName = "vpc-rg-name"
+				p.VPCName = "missing-cp-subnet"
+				p.ComputeSubnets = []string{"comp-1", "comp-2"}
 				return p
 			}(),
 			valid: false,
 		},
 		{
-			name: "invalid vpc config missing subnets",
+			name: "vpc without compute subnet",
 			platform: func() *ibmcloud.Platform {
 				p := validMinimalPlatform()
-				p.VPC = "valid-vpc-name"
-				p.VPCResourceGroupName = "vpc-rg-name"
+				p.VPCName = "missing-comp-subnet"
+				p.ControlPlaneSubnets = []string{"cp-1", "cp-2"}
 				return p
 			}(),
 			valid: false,
 		},
 		{
-			name: "invalid vpc config missing vpcResourceGroupNname",
+			name: "subnets without vpc",
 			platform: func() *ibmcloud.Platform {
 				p := validMinimalPlatform()
-				p.VPC = "valid-vpc-name"
-				p.Subnets = []string{"valid-compute-subnet-id", "valid-control-subnet-id"}
+				p.ControlPlaneSubnets = []string{"cp-1"}
+				p.ComputeSubnets = []string{"comp-1"}
 				return p
 			}(),
 			valid: false,
 		},
 		{
-			name: "invalid vpc config missing vpc and subnets",
+			name: "invalid url (no hostname) for service endpoint",
 			platform: func() *ibmcloud.Platform {
 				p := validMinimalPlatform()
-				p.VPCResourceGroupName = "vpc-rg-name"
+				p.ServiceEndpoints = []configv1.IBMCloudServiceEndpoint{{
+					Name: configv1.IBMCloudServiceIAM,
+					URL:  "/some/path",
+				}}
 				return p
 			}(),
 			valid: false,
 		},
 		{
-			name: "invalid vpc config missing vpcResourceGroupName",
+			name: "invalid url (has path) for service endpoint",
 			platform: func() *ibmcloud.Platform {
 				p := validMinimalPlatform()
-				p.VPC = "valid-vpc-name"
-				p.Subnets = []string{"valid-compute-subnet-id", "valid-control-subnet-id"}
+				p.ServiceEndpoints = []configv1.IBMCloudServiceEndpoint{{
+					Name: configv1.IBMCloudServiceIAM,
+					URL:  "https://test-iam.random.local/some/path",
+				}}
 				return p
 			}(),
 			valid: false,
 		},
 		{
-			name: "invalid vpc config missing vpc and subnets",
+			name: "valid url (has version path, no trailing '/') for service endpoint",
 			platform: func() *ibmcloud.Platform {
 				p := validMinimalPlatform()
-				p.VPCResourceGroupName = "vpc-rg-name"
+				p.ServiceEndpoints = []configv1.IBMCloudServiceEndpoint{{
+					Name: configv1.IBMCloudServiceIAM,
+					URL:  "https://test-iam.random.local/v2",
+				}}
+				return p
+			}(),
+			valid: true,
+		},
+		{
+			name: "valid url (has version path and trailing '/') for service endpoint",
+			platform: func() *ibmcloud.Platform {
+				p := validMinimalPlatform()
+				p.ServiceEndpoints = []configv1.IBMCloudServiceEndpoint{{
+					Name: configv1.IBMCloudServiceIAM,
+					URL:  "https://test-iam.random.local/v35/",
+				}}
+				return p
+			}(),
+			valid: true,
+		},
+		{
+			name: "invalid url (has request) for service endpoint",
+			platform: func() *ibmcloud.Platform {
+				p := validMinimalPlatform()
+				p.ServiceEndpoints = []configv1.IBMCloudServiceEndpoint{{
+					Name: configv1.IBMCloudServiceIAM,
+					URL:  "https://test-iam.random.local?foo=some",
+				}}
 				return p
 			}(),
 			valid: false,
 		},
 		{
-			name: "invalid vpc config missing vpc and vpcResourceGroupName",
+			name: "valid url (no scheme) for service endpoint",
 			platform: func() *ibmcloud.Platform {
 				p := validMinimalPlatform()
-				p.Subnets = []string{"valid-compute-subnet-id", "valid-control-subnet-id"}
+				p.ServiceEndpoints = []configv1.IBMCloudServiceEndpoint{{
+					Name: configv1.IBMCloudServiceIAM,
+					URL:  "test-iam.random.local",
+				}}
+				return p
+			}(),
+			valid: true,
+		},
+		{
+			name: "valid url (with scheme) for service endpoint",
+			platform: func() *ibmcloud.Platform {
+				p := validMinimalPlatform()
+				p.ServiceEndpoints = []configv1.IBMCloudServiceEndpoint{{
+					Name: configv1.IBMCloudServiceIAM,
+					URL:  "https://test-iam.random.local",
+				}}
+				return p
+			}(),
+			valid: true,
+		},
+		{
+			name: "duplicate service endpoints",
+			platform: func() *ibmcloud.Platform {
+				p := validMinimalPlatform()
+				p.ServiceEndpoints = []configv1.IBMCloudServiceEndpoint{{
+					Name: configv1.IBMCloudServiceIAM,
+					URL:  "test-iam.random.local",
+				}, {
+					Name: configv1.IBMCloudServiceIAM,
+					URL:  "https://test-iam.random.local",
+				}}
 				return p
 			}(),
 			valid: false,
 		},
 		{
-			name: "invalid vpc config missing subnets and vpcResourceGroupName",
+			name: "multiple valid service endpoints",
 			platform: func() *ibmcloud.Platform {
 				p := validMinimalPlatform()
-				p.VPC = "valid-vpc-name"
+				p.ServiceEndpoints = []configv1.IBMCloudServiceEndpoint{{
+					Name: configv1.IBMCloudServiceIAM,
+					URL:  "test-iam.random.local",
+				}, {
+					Name: configv1.IBMCloudServiceVPC,
+					URL:  "test-vpc.random.local",
+				}}
 				return p
 			}(),
-			valid: false,
+			valid: true,
 		},
 	}
 	for _, tc := range cases {

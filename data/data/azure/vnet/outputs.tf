@@ -51,7 +51,7 @@ output "resource_group_name" {
 }
 
 output "vm_image" {
-  value = azurerm_image.cluster.id
+  value = var.azure_hypervgeneration_version == "V2" ? azurerm_shared_image_version.clustergen2_image_version.id : azurerm_shared_image_version.cluster_image_version.id
 }
 
 output "identity" {
@@ -62,10 +62,10 @@ output "subnet_id" {
   value = local.master_subnet_id
 }
 
-output "storage_account" {
-  value = azurerm_storage_account.cluster
+output "storage_account_name" {
+  value = azurerm_storage_account.cluster.name
 }
 
-output "outbound_udr" {
-  value = var.azure_outbound_user_defined_routing
+output "outbound_type" {
+  value = var.azure_outbound_routing_type
 }

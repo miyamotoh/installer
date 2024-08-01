@@ -1,19 +1,20 @@
 package manifests
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
 	"path/filepath"
 	"strings"
 
-	"github.com/ghodss/yaml"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/yaml"
 
+	"github.com/openshift/api/annotations"
 	"github.com/openshift/installer/pkg/asset"
 	"github.com/openshift/installer/pkg/asset/installconfig"
 )
@@ -49,14 +50,14 @@ func (*AdditionalTrustBundleConfig) Dependencies() []asset.Asset {
 }
 
 // Generate generates the CloudProviderConfig.
-func (atbc *AdditionalTrustBundleConfig) Generate(dependencies asset.Parents) error {
+func (atbc *AdditionalTrustBundleConfig) Generate(_ context.Context, dependencies asset.Parents) error {
 	installConfig := &installconfig.InstallConfig{}
 	dependencies.Get(installConfig)
 
 	if installConfig.Config.AdditionalTrustBundle == "" {
 		return nil
 	}
-	data, err := parseCertificates(installConfig.Config.AdditionalTrustBundle)
+	data, err := ParseCertificates(installConfig.Config.AdditionalTrustBundle)
 
 	if err != nil {
 		return err
@@ -70,6 +71,9 @@ func (atbc *AdditionalTrustBundleConfig) Generate(dependencies asset.Parents) er
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: "openshift-config",
 			Name:      additionalTrustBundleConfigMapName,
+			Annotations: map[string]string{
+				annotations.OpenShiftComponent: "End User",
+			},
 		},
 		Data: data,
 	}
@@ -99,7 +103,8 @@ func (atbc *AdditionalTrustBundleConfig) Load(f asset.FileFetcher) (bool, error)
 	return false, nil
 }
 
-func parseCertificates(certificates string) (map[string]string, error) {
+// ParseCertificates parses and verifies a PEM certificate bundle
+func ParseCertificates(certificates string) (map[string]string, error) {
 	rest := []byte(certificates)
 	var sb strings.Builder
 	for {

@@ -1,0 +1,35 @@
+.git
+.github
+.vscode
+
+.dockerignore
+.gitignore
+.golangci.yml
+*.out
+bin/
+hack/.bin/
+hack/tools/bin/
+out/
+docs/
+scripts/
+**/*.md
+*.test
+cluster-api-provider-vsphere
+examples/provider-components/provider-components*.yaml
+test/
+
+# go.work files
+go.work
+go.work.sum
+
+# Test binary, build with `go test -c`
+**/*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+**/*.out
+
+# Common editor / temporary files
+**/*~
+**/*.tmp
+**/.DS_Store
+**/*.swp

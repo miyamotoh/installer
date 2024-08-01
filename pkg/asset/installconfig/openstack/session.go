@@ -2,14 +2,14 @@
 package openstack
 
 import (
+	"fmt"
 	"sync"
 
-	openstackdefaults "github.com/openshift/installer/pkg/types/openstack/defaults"
-	"github.com/pkg/errors"
-
-	"github.com/ghodss/yaml"
-	"github.com/gophercloud/utils/openstack/clientconfig"
+	"github.com/gophercloud/utils/v2/openstack/clientconfig"
 	"github.com/sirupsen/logrus"
+	"sigs.k8s.io/yaml"
+
+	openstackdefaults "github.com/openshift/installer/pkg/types/openstack/defaults"
 )
 
 var onceLoggers = map[string]*sync.Once{}
@@ -17,6 +17,7 @@ var onceLoggers = map[string]*sync.Once{}
 // Session is an object representing session for OpenStack.
 type Session struct {
 	CloudConfig *clientconfig.Cloud
+	ClientOpts  *clientconfig.ClientOpts
 }
 
 // GetSession returns an OpenStack session for a given cloud name in clouds.yaml.
@@ -30,6 +31,7 @@ func GetSession(cloudName string) (*Session, error) {
 	}
 	return &Session{
 		CloudConfig: cloudConfig,
+		ClientOpts:  opts,
 	}, nil
 }
 
@@ -43,7 +45,7 @@ func (opts yamlLoadOpts) LoadCloudsYAML() (map[string]clientconfig.Cloud, error)
 	}
 	err = yaml.Unmarshal(content, &clouds)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to unmarshal yaml")
+		return nil, fmt.Errorf("failed to unmarshal yaml: %w", err)
 	}
 
 	return clouds.Clouds, nil
@@ -60,7 +62,7 @@ func (opts yamlLoadOpts) LoadSecureCloudsYAML() (map[string]clientconfig.Cloud, 
 	}
 	err = yaml.Unmarshal(content, &clouds)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to unmarshal yaml")
+		return nil, fmt.Errorf("failed to unmarshal yaml: %w", err)
 	}
 	return clouds.Clouds, err
 }
@@ -76,7 +78,7 @@ func (opts yamlLoadOpts) LoadPublicCloudsYAML() (map[string]clientconfig.Cloud, 
 	}
 	err = yaml.Unmarshal(content, &publicClouds)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to unmarshal yaml")
+		return nil, fmt.Errorf("failed to unmarshal yaml: %w", err)
 	}
 	return publicClouds.Clouds, err
 }

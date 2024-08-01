@@ -10,18 +10,19 @@ import (
 	"github.com/pborman/uuid"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	resourcemanager "google.golang.org/api/cloudresourcemanager/v3"
+	"google.golang.org/api/compute/v1"
+	"google.golang.org/api/dns/v1"
+	"google.golang.org/api/file/v1"
+	"google.golang.org/api/googleapi"
+	"google.golang.org/api/iam/v1"
+	"google.golang.org/api/option"
+	"google.golang.org/api/storage/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 
-	resourcemanager "google.golang.org/api/cloudresourcemanager/v1"
-	compute "google.golang.org/api/compute/v1"
-	dns "google.golang.org/api/dns/v1"
-	"google.golang.org/api/googleapi"
-	iam "google.golang.org/api/iam/v1"
-	"google.golang.org/api/option"
-	storage "google.golang.org/api/storage/v1"
-
 	gcpconfig "github.com/openshift/installer/pkg/asset/installconfig/gcp"
+	gcpconsts "github.com/openshift/installer/pkg/constants/gcp"
 	"github.com/openshift/installer/pkg/destroy/providers"
 	"github.com/openshift/installer/pkg/types"
 	gcptypes "github.com/openshift/installer/pkg/types/gcp"
@@ -30,21 +31,44 @@ import (
 
 var (
 	defaultTimeout = 2 * time.Minute
+	longTimeout    = 10 * time.Minute
+)
+
+type resourceScope string
+
+const (
+	// capgProviderOwnedLabelFmt is the format string for the label
+	// used for resources created by the Cluster API GCP provider.
+	capgProviderOwnedLabelFmt = "capg-cluster-%s"
+
+	// gcpGlobalResource is an identifier to indicate that the resource(s)
+	// that are being deleted are globally scoped.
+	gcpGlobalResource resourceScope = "global"
+
+	// gcpRegionalResource is an identifier to indicate that the resource(s)
+	// that are being deleted are regionally scoped.
+	gcpRegionalResource resourceScope = "regional"
 )
 
 // ClusterUninstaller holds the various options for the cluster we want to delete
 type ClusterUninstaller struct {
-	Logger    logrus.FieldLogger
-	Region    string
-	ProjectID string
-	ClusterID string
-	Context   context.Context
+	Logger            logrus.FieldLogger
+	Region            string
+	ProjectID         string
+	NetworkProjectID  string
+	PrivateZoneDomain string
+	ClusterID         string
 
 	computeSvc *compute.Service
 	iamSvc     *iam.Service
 	dnsSvc     *dns.Service
 	storageSvc *storage.Service
 	rmSvc      *resourcemanager.Service
+	fileSvc    *file.Service
+
+	// cpusByMachineType caches the number of CPUs per machine type, used in quota
+	// calculations on deletion
+	cpusByMachineType map[string]int64
 
 	// cloudControllerUID is the cluster ID used by the cluster's cloud controller
 	// to generate load balancer related resources. It can be obtained either
@@ -56,14 +80,15 @@ type ClusterUninstaller struct {
 	pendingItemTracker
 }
 
-// New returns an AWS destroyer from ClusterMetadata.
+// New returns a GCP destroyer from ClusterMetadata.
 func New(logger logrus.FieldLogger, metadata *types.ClusterMetadata) (providers.Destroyer, error) {
 	return &ClusterUninstaller{
 		Logger:             logger,
 		Region:             metadata.ClusterPlatformMetadata.GCP.Region,
 		ProjectID:          metadata.ClusterPlatformMetadata.GCP.ProjectID,
+		NetworkProjectID:   metadata.ClusterPlatformMetadata.GCP.NetworkProjectID,
+		PrivateZoneDomain:  metadata.ClusterPlatformMetadata.GCP.PrivateZoneDomain,
 		ClusterID:          metadata.InfraID,
-		Context:            context.Background(),
 		cloudControllerUID: gcptypes.CloudControllerUID(metadata.InfraID),
 		requestIDTracker:   newRequestIDTracker(),
 		pendingItemTracker: newPendingItemTracker(),
@@ -71,13 +96,11 @@ func New(logger logrus.FieldLogger, metadata *types.ClusterMetadata) (providers.
 }
 
 // Run is the entrypoint to start the uninstall process
-func (o *ClusterUninstaller) Run() error {
-	ctx, cancel := o.contextWithTimeout()
-	defer cancel()
-
+func (o *ClusterUninstaller) Run() (*types.ClusterQuota, error) {
+	ctx := context.Background()
 	ssn, err := gcpconfig.GetSession(ctx)
 	if err != nil {
-		return errors.Wrap(err, "failed to get session")
+		return nil, errors.Wrap(err, "failed to get session")
 	}
 
 	options := []option.ClientOption{
@@ -87,27 +110,48 @@ func (o *ClusterUninstaller) Run() error {
 
 	o.computeSvc, err = compute.NewService(ctx, options...)
 	if err != nil {
-		return errors.Wrap(err, "failed to create compute service")
+		return nil, errors.Wrap(err, "failed to create compute service")
+	}
+
+	cctx, cancel := context.WithTimeout(ctx, longTimeout)
+	defer cancel()
+
+	o.cpusByMachineType = map[string]int64{}
+	req := o.computeSvc.MachineTypes.AggregatedList(o.ProjectID).Fields("items/*/machineTypes(name,guestCpus),nextPageToken")
+	if err := req.Pages(cctx, func(list *compute.MachineTypeAggregatedList) error {
+		for _, scopedList := range list.Items {
+			for _, item := range scopedList.MachineTypes {
+				o.cpusByMachineType[item.Name] = item.GuestCpus
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, errors.Wrap(err, "failed to cache machine types")
 	}
 
 	o.iamSvc, err = iam.NewService(ctx, options...)
 	if err != nil {
-		return errors.Wrap(err, "failed to create iam service")
+		return nil, errors.Wrap(err, "failed to create iam service")
 	}
 
 	o.dnsSvc, err = dns.NewService(ctx, options...)
 	if err != nil {
-		return errors.Wrap(err, "failed to create dns service")
+		return nil, errors.Wrap(err, "failed to create dns service")
 	}
 
 	o.storageSvc, err = storage.NewService(ctx, options...)
 	if err != nil {
-		return errors.Wrap(err, "failed to create storage service")
+		return nil, errors.Wrap(err, "failed to create storage service")
 	}
 
 	o.rmSvc, err = resourcemanager.NewService(ctx, options...)
 	if err != nil {
-		return errors.Wrap(err, "failed to create resourcemanager service")
+		return nil, errors.Wrap(err, "failed to create resourcemanager service")
+	}
+
+	o.fileSvc, err = file.NewService(ctx, options...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create filestore service: %w", err)
 	}
 
 	err = wait.PollImmediateInfinite(
@@ -115,17 +159,17 @@ func (o *ClusterUninstaller) Run() error {
 		o.destroyCluster,
 	)
 	if err != nil {
-		return errors.Wrap(err, "failed to destroy cluster")
+		return nil, errors.Wrap(err, "failed to destroy cluster")
 	}
 
-	return nil
-
+	quota := gcptypes.Quota(o.pendingItemTracker.removedQuota)
+	return &types.ClusterQuota{GCP: &quota}, nil
 }
 
 func (o *ClusterUninstaller) destroyCluster() (bool, error) {
 	stagedFuncs := [][]struct {
 		name    string
-		execute func() error
+		execute func(ctx context.Context) error
 	}{{
 		{name: "Stop instances", execute: o.stopInstances},
 	}, {
@@ -140,21 +184,27 @@ func (o *ClusterUninstaller) destroyCluster() (bool, error) {
 		{name: "Routes", execute: o.destroyRoutes},
 		{name: "Firewalls", execute: o.destroyFirewalls},
 		{name: "Addresses", execute: o.destroyAddresses},
+		{name: "Forwarding rules", execute: o.destroyForwardingRules},
 		{name: "Target Pools", execute: o.destroyTargetPools},
 		{name: "Instance groups", execute: o.destroyInstanceGroups},
-		{name: "Forwarding rules", execute: o.destroyForwardingRules},
+		{name: "Target TCP Proxies", execute: o.destroyTargetTCPProxies},
 		{name: "Backend services", execute: o.destroyBackendServices},
 		{name: "Health checks", execute: o.destroyHealthChecks},
 		{name: "HTTP Health checks", execute: o.destroyHTTPHealthChecks},
 		{name: "Routers", execute: o.destroyRouters},
 		{name: "Subnetworks", execute: o.destroySubnetworks},
 		{name: "Networks", execute: o.destroyNetworks},
+		{name: "Filestores", execute: o.destroyFilestores},
 	}}
+
+	// create the main Context, so all stages can accept and make context children
+	ctx := context.Background()
+
 	done := true
 	for _, stage := range stagedFuncs {
 		if done {
 			for _, f := range stage {
-				err := f.execute()
+				err := f.execute(ctx)
 				if err != nil {
 					o.Logger.Debugf("%s: %v", f.name, err)
 					done = false
@@ -165,15 +215,39 @@ func (o *ClusterUninstaller) destroyCluster() (bool, error) {
 	return done, nil
 }
 
-// getZoneName extracts a zone name from a zone URL of the form:
-// https://www.googleapis.com/compute/v1/projects/project-id/zones/us-central1-a
-// Splitting the URL with the delimiter `/projects`, leaves a string like: project-id/zones/us-central1-a
+// getZoneName extracts a zone name from a zone URL
 func (o *ClusterUninstaller) getZoneName(zoneURL string) string {
-	parts := strings.Split(zoneURL, "/")
-	if len(parts) > 1 {
-		return parts[len(parts)-1]
+	return getNameFromURL("zones", zoneURL)
+}
+
+// getNameFromURL gets the item name from the full URL, ex:
+// https://www.googleapis.com/compute/v1/projects/project-id/zones/us-central1-a -> us-central1-a
+// https://www.googleapis.com/compute/v1/projects/project-id/global/networks/something-network -> something-network
+func getNameFromURL(item, url string) string {
+	items := strings.Split(url, item+"/")
+	if len(items) < 2 {
+		return ""
 	}
-	return ""
+	return items[len(items)-1]
+}
+
+// getRegionFromZone extracts a region name from a zone name of the form: us-central1-a
+// Splitting the name with the last delimiter `-`, leaves a string like: us-central1
+func getRegionFromZone(zoneName string) string {
+	return zoneName[:strings.LastIndex(zoneName, "-")]
+}
+
+// getDiskLimit determines the name of the quota Limit that applies to the disk type, ex:
+// projects/project/zones/zone/diskTypes/pd-standard -> "ssd_total_storage"
+func getDiskLimit(typeURL string) string {
+	switch getNameFromURL("diskTypes", typeURL) {
+	case "pd-balanced", "pd-ssd":
+		return "ssd_total_storage"
+	case "pd-standard":
+		return "disks_total_storage"
+	default:
+		return "unknown"
+	}
 }
 
 func (o *ClusterUninstaller) isClusterResource(name string) bool {
@@ -185,11 +259,24 @@ func (o *ClusterUninstaller) clusterIDFilter() string {
 }
 
 func (o *ClusterUninstaller) clusterLabelFilter() string {
-	return fmt.Sprintf("labels.kubernetes-io-cluster-%s = \"owned\"", o.ClusterID)
+	return fmt.Sprintf("(labels.%s = \"owned\") OR (labels.%s = \"owned\")",
+		fmt.Sprintf(gcpconsts.ClusterIDLabelFmt, o.ClusterID), fmt.Sprintf(capgProviderOwnedLabelFmt, o.ClusterID))
 }
 
 func (o *ClusterUninstaller) clusterLabelOrClusterIDFilter() string {
 	return fmt.Sprintf("(%s) OR (%s)", o.clusterIDFilter(), o.clusterLabelFilter())
+}
+
+func isForbidden(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ae *googleapi.Error
+	if errors.As(err, &ae) {
+		return ae.Code == http.StatusForbidden
+	}
+
+	return false
 }
 
 func isNoOp(err error) bool {
@@ -211,10 +298,6 @@ func aggregateError(errs []error, pending ...int) error {
 		return errors.Errorf("%d items pending", pending[0])
 	}
 	return nil
-}
-
-func (o *ClusterUninstaller) contextWithTimeout() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(o.Context, defaultTimeout)
 }
 
 // requestIDTracker keeps track of a set of request IDs mapped to a unique resource
@@ -252,6 +335,7 @@ func (t requestIDTracker) resetRequestID(identifier ...string) {
 // pendingItemTracker tracks a set of pending item names for a given type of resource
 type pendingItemTracker struct {
 	pendingItems map[string]cloudResources
+	removedQuota []gcptypes.QuotaUsage
 }
 
 func newPendingItemTracker() pendingItemTracker {
@@ -261,7 +345,7 @@ func newPendingItemTracker() pendingItemTracker {
 }
 
 // GetAllPendintItems returns a slice of all of the pending items across all types.
-func (t pendingItemTracker) GetAllPendingItems() []cloudResource {
+func (t *pendingItemTracker) GetAllPendingItems() []cloudResource {
 	var items []cloudResource
 	for _, is := range t.pendingItems {
 		for _, i := range is {
@@ -272,7 +356,7 @@ func (t pendingItemTracker) GetAllPendingItems() []cloudResource {
 }
 
 // getPendingItems returns the list of resources to be deleted.
-func (t pendingItemTracker) getPendingItems(itemType string) []cloudResource {
+func (t *pendingItemTracker) getPendingItems(itemType string) []cloudResource {
 	lastFound, exists := t.pendingItems[itemType]
 	if !exists {
 		lastFound = cloudResources{}
@@ -281,7 +365,7 @@ func (t pendingItemTracker) getPendingItems(itemType string) []cloudResource {
 }
 
 // insertPendingItems adds to the list of resources to be deleted.
-func (t pendingItemTracker) insertPendingItems(itemType string, items []cloudResource) []cloudResource {
+func (t *pendingItemTracker) insertPendingItems(itemType string, items []cloudResource) []cloudResource {
 	lastFound, exists := t.pendingItems[itemType]
 	if !exists {
 		lastFound = cloudResources{}
@@ -292,10 +376,13 @@ func (t pendingItemTracker) insertPendingItems(itemType string, items []cloudRes
 }
 
 // deletePendingItems removes from the list of resources to be deleted.
-func (t pendingItemTracker) deletePendingItems(itemType string, items []cloudResource) []cloudResource {
+func (t *pendingItemTracker) deletePendingItems(itemType string, items []cloudResource) []cloudResource {
 	lastFound, exists := t.pendingItems[itemType]
 	if !exists {
 		lastFound = cloudResources{}
+	}
+	for _, item := range items {
+		t.removedQuota = mergeAllUsage(t.removedQuota, item.quota)
 	}
 	lastFound = lastFound.delete(items...)
 	t.pendingItems[itemType] = lastFound

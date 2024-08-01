@@ -5,6 +5,7 @@ resource "azurerm_virtual_network" "cluster_vnet" {
   resource_group_name = data.azurerm_resource_group.main.name
   location            = var.azure_region
   address_space       = concat(var.machine_v4_cidrs, var.machine_v6_cidrs)
+  tags                = var.azure_extra_tags
 }
 
 resource "azurerm_subnet" "master_subnet" {
@@ -29,4 +30,16 @@ resource "azurerm_subnet" "worker_subnet" {
   ] : cidr.value if cidr.include]
   virtual_network_name = local.virtual_network
   name                 = var.azure_compute_subnet
+}
+
+resource "azurerm_subnet_nat_gateway_association" "nat_master_assoc" {
+  count          = var.azure_outbound_routing_type == "NatGateway" ? 1 : 0
+  subnet_id      = local.master_subnet_id
+  nat_gateway_id = azurerm_nat_gateway.nat_gw[0].id
+}
+
+resource "azurerm_subnet_nat_gateway_association" "nat_worker_assoc" {
+  count          = var.azure_outbound_routing_type == "NatGateway" ? 1 : 0
+  subnet_id      = local.worker_subnet_id
+  nat_gateway_id = azurerm_nat_gateway.nat_gw[0].id
 }

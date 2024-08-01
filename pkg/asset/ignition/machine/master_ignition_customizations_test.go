@@ -1,6 +1,7 @@
 package machine
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -35,8 +36,8 @@ func TestMasterIgnitionCustomizationsGenerate(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			installConfig := &installconfig.InstallConfig{
-				Config: &types.InstallConfig{
+			installConfig := installconfig.MakeAsset(
+				&types.InstallConfig{
 					Networking: &types.Networking{
 						ServiceNetwork: []ipnet.IPNet{*ipnet.MustParseCIDR("10.0.1.0/24")},
 					},
@@ -45,18 +46,17 @@ func TestMasterIgnitionCustomizationsGenerate(t *testing.T) {
 							Region: "us-east",
 						},
 					},
-				},
-			}
+				})
 
 			rootCA := &tls.RootCA{}
-			err := rootCA.Generate(nil)
+			err := rootCA.Generate(context.Background(), nil)
 			assert.NoError(t, err, "unexpected error generating root CA")
 
 			parents := asset.Parents{}
 			parents.Add(installConfig, rootCA)
 
 			master := &Master{}
-			err = master.Generate(parents)
+			err = master.Generate(context.Background(), parents)
 			assert.NoError(t, err, "unexpected error generating master asset")
 
 			if tc.customize == true {
@@ -67,7 +67,7 @@ func TestMasterIgnitionCustomizationsGenerate(t *testing.T) {
 
 			parents.Add(master)
 			masterIgnCheck := &MasterIgnitionCustomizations{}
-			err = masterIgnCheck.Generate(parents)
+			err = masterIgnCheck.Generate(context.Background(), parents)
 			assert.NoError(t, err, "unexpected error generating master ignition check asset")
 
 			actualFiles := masterIgnCheck.Files()

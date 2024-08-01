@@ -2,6 +2,7 @@ resource "azurerm_network_security_group" "cluster" {
   name                = "${var.cluster_id}-nsg"
   location            = var.azure_region
   resource_group_name = data.azurerm_resource_group.main.name
+  tags                = var.azure_extra_tags
 }
 
 resource "azurerm_subnet_network_security_group_association" "master" {
@@ -19,6 +20,7 @@ resource "azurerm_subnet_network_security_group_association" "worker" {
 }
 
 resource "azurerm_network_security_rule" "apiserver_in" {
+  count                       = var.azure_preexisting_network ? 0 : 1
   name                        = "apiserver_in"
   priority                    = 101
   direction                   = "Inbound"

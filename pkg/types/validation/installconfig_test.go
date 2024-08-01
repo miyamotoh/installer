@@ -5,24 +5,30 @@ import (
 	"net"
 	"testing"
 
-	"github.com/pborman/uuid"
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/pointer"
+	utilsslice "k8s.io/utils/strings/slices"
 
+	configv1 "github.com/openshift/api/config/v1"
+	operv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/installer/pkg/ipnet"
 	"github.com/openshift/installer/pkg/types"
 	"github.com/openshift/installer/pkg/types/aws"
 	"github.com/openshift/installer/pkg/types/azure"
 	"github.com/openshift/installer/pkg/types/baremetal"
+	"github.com/openshift/installer/pkg/types/external"
 	"github.com/openshift/installer/pkg/types/gcp"
 	"github.com/openshift/installer/pkg/types/ibmcloud"
-	"github.com/openshift/installer/pkg/types/libvirt"
 	"github.com/openshift/installer/pkg/types/none"
+	"github.com/openshift/installer/pkg/types/nutanix"
 	"github.com/openshift/installer/pkg/types/openstack"
-	"github.com/openshift/installer/pkg/types/ovirt"
+	"github.com/openshift/installer/pkg/types/powervs"
 	"github.com/openshift/installer/pkg/types/vsphere"
 )
+
+const TechPreviewNoUpgrade = "TechPreviewNoUpgrade"
 
 func validInstallConfig() *types.InstallConfig {
 	return &types.InstallConfig{
@@ -78,22 +84,58 @@ func validIBMCloudPlatform() *ibmcloud.Platform {
 	}
 }
 
-func validLibvirtPlatform() *libvirt.Platform {
-	return &libvirt.Platform{
-		URI: "qemu+tcp://192.168.122.1/system",
-		Network: &libvirt.Network{
-			IfName: "tt0",
-		},
+func validSSHKey() string {
+	return "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQD1+D0ns3LYRPeFK2nqOtVKBGueBQGdBLre5A+afvjaIj/QgtJuwv3rb6Uso8GMPbFlj693/b9BcV0TGxa5lC8cAGKrpxKUPvZ0WLRFLMP5HKBFf6+N4SQR9NKi7Liw8Km1GW9l+s/gMFz/ypANTg8PqvR4yglW+6jJEuKdCy/q14s9kEn4czifBzqiBw60gUiDdWbawl8yF+TxiqeKTCfw4HTeY6j1vui0ROuN2XAWgdH999rNAr1QY8BPMTjQJ5X7jeFgagq7u+snXgWycoDsn4fZP1XL91nQXLdZZgJ3T/qtjUbQt4wUuiqCu4cyN8KRoFQBtX9X7TKU8aH/Kkf+t67zS/SE0ZgvCkNr+iaqYVyHpmBoLh3AaWUYJ2bQ7fx9FvEGLcDYNkwqBED6VwuqB7nw+zGYVouGLs+2UKjfc+A1BOP0Q/2ACEkt1u5iLA+dfEC5nMMThIMNgXpjpsYLsGDKV+e9fEzrTphYtYs/XKaYlG634kGMk7wdgsHoTL0= localhost"
+}
+
+func validPowerVSPlatform() *powervs.Platform {
+	return &powervs.Platform{
+		Zone: "dal10",
 	}
 }
 
 func validVSpherePlatform() *vsphere.Platform {
 	return &vsphere.Platform{
-		VCenter:          "test-server",
-		Username:         "test-username",
-		Password:         "test-password",
-		Datacenter:       "test-datacenter",
-		DefaultDatastore: "test-datastore",
+		VCenters: []vsphere.VCenter{
+			{
+				Server:   "test-vcenter",
+				Port:     443,
+				Username: "test-username",
+				Password: "test-password",
+				Datacenters: []string{
+					"test-datacenter",
+				},
+			},
+		},
+		FailureDomains: []vsphere.FailureDomain{
+			{
+				Name:   "test-east-1a",
+				Region: "test-east",
+				Zone:   "test-east-1a",
+				Server: "test-vcenter",
+				Topology: vsphere.Topology{
+					Datacenter:     "test-datacenter",
+					ComputeCluster: "/test-datacenter/host/test-cluster",
+					Datastore:      "/test-datacenter/datastore/test-datastore",
+					Networks:       []string{"test-portgroup"},
+					ResourcePool:   "/test-datacenter/host/test-cluster/Resources/test-resourcepool",
+					Folder:         "/test-datacenter/vm/test-folder",
+				},
+			},
+			{
+				Name:   "test-east-2a",
+				Region: "test-east",
+				Zone:   "test-east-2a",
+				Server: "test-vcenter",
+				Topology: vsphere.Topology{
+					Datacenter:     "test-datacenter",
+					ComputeCluster: "/test-datacenter/host/test-cluster",
+					Datastore:      "/test-datacenter/datastore/test-datastore",
+					Networks:       []string{"test-portgroup"},
+					Folder:         "/test-datacenter/vm/test-folder",
+				},
+			},
+		},
 	}
 }
 
@@ -109,6 +151,7 @@ func validBareMetalPlatform() *baremetal.Platform {
 		Hosts: []*baremetal.Host{
 			{
 				Name:           "host1",
+				Role:           "master",
 				BootMACAddress: "CA:FE:CA:FE:00:00",
 				BMC: baremetal.BMC{
 					Username: "root",
@@ -118,6 +161,7 @@ func validBareMetalPlatform() *baremetal.Platform {
 			},
 			{
 				Name:           "host2",
+				Role:           "worker",
 				BootMACAddress: "CA:FE:CA:FE:00:01",
 				BMC: baremetal.BMC{
 					Username: "root",
@@ -129,8 +173,8 @@ func validBareMetalPlatform() *baremetal.Platform {
 		ExternalBridge:         iface[0].Name,
 		ProvisioningBridge:     iface[0].Name,
 		DefaultMachinePlatform: &baremetal.MachinePool{},
-		APIVIP:                 "10.0.0.5",
-		IngressVIP:             "10.0.0.4",
+		APIVIPs:                []string{"10.0.0.5"},
+		IngressVIPs:            []string{"10.0.0.4"},
 	}
 }
 
@@ -141,12 +185,29 @@ func validOpenStackPlatform() *openstack.Platform {
 		DefaultMachinePlatform: &openstack.MachinePool{
 			FlavorName: "test-flavor",
 		},
+		APIVIPs:     []string{"10.0.0.5"},
+		IngressVIPs: []string{"10.0.0.4"},
+	}
+}
+
+func validNutanixPlatform() *nutanix.Platform {
+	return &nutanix.Platform{
+		PrismCentral: nutanix.PrismCentral{
+			Endpoint: nutanix.PrismEndpoint{Address: "test-pc", Port: 8080},
+			Username: "test-username-pc",
+			Password: "test-password-pc",
+		},
+		PrismElements: []nutanix.PrismElement{{
+			UUID:     "test-pe-uuid",
+			Endpoint: nutanix.PrismEndpoint{Address: "test-pe", Port: 8081},
+		}},
+		SubnetUUIDs: []string{"test-subnet"},
 	}
 }
 
 func validIPv4NetworkingConfig() *types.Networking {
 	return &types.Networking{
-		NetworkType: "OpenShiftSDN",
+		NetworkType: "OVNKubernetes",
 		MachineNetwork: []types.MachineNetworkEntry{
 			{
 				CIDR: *ipnet.MustParseCIDR("10.0.0.0/16"),
@@ -161,6 +222,7 @@ func validIPv4NetworkingConfig() *types.Networking {
 				HostPrefix: 28,
 			},
 		},
+		ClusterNetworkMTU: 0,
 	}
 }
 
@@ -209,15 +271,6 @@ func validDualStackNetworkingConfig() *types.Networking {
 				HostPrefix: 64,
 			},
 		},
-	}
-}
-
-func validOvirtPlatform() *ovirt.Platform {
-	return &ovirt.Platform{
-		ClusterID:       uuid.NewRandom().String(),
-		StorageDomainID: uuid.NewRandom().String(),
-		APIVIP:          "1.1.1.1",
-		IngressVIP:      "1.1.1.3",
 	}
 }
 
@@ -421,7 +474,7 @@ func TestValidateInstallConfig(t *testing.T) {
 			name: "cluster network host prefix unset",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
-				c.Networking.NetworkType = "OpenShiftSDN"
+				c.Networking.NetworkType = "OVNKubernetes"
 				c.Networking.ClusterNetwork[0].CIDR = *ipnet.MustParseCIDR("192.168.1.0/24")
 				c.Networking.ClusterNetwork[0].HostPrefix = 0
 				return c
@@ -437,6 +490,76 @@ func TestValidateInstallConfig(t *testing.T) {
 				return c
 			}(),
 			expectedError: ``,
+		},
+		{
+			name: "networking clusterNetworkMTU - valid high limit ovn",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking.NetworkType = string(operv1.NetworkTypeOVNKubernetes)
+				c.Networking.ClusterNetworkMTU = 8901
+				fmt.Println(c.Platform.Name())
+				return c
+			}(),
+		},
+		{
+			name: "networking clusterNetworkMTU - valid low limit",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking.NetworkType = string(operv1.NetworkTypeOVNKubernetes)
+				c.Networking.ClusterNetworkMTU = 1000
+				return c
+			}(),
+		},
+		{
+			name: "networking clusterNetworkMTU - invalid value lower",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking.ClusterNetworkMTU = 999
+				return c
+			}(),
+			expectedError: `^networking\.clusterNetworkMTU: Invalid value: 999: cluster network MTU is lower than the minimum value of 1000$`,
+		},
+		{
+			name: "networking clusterNetworkMTU - invalid value ovn",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking.NetworkType = string(operv1.NetworkTypeOVNKubernetes)
+				c.Networking.ClusterNetworkMTU = 8951
+				return c
+			}(),
+			expectedError: `^networking\.clusterNetworkMTU: Invalid value: 8951: cluster network MTU exceeds the maximum value with the network plugin OVNKubernetes of 8901$`,
+		},
+		{
+			name: "networking clusterNetworkMTU - invalid jumbo value",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking.ClusterNetworkMTU = 9002
+				return c
+			}(),
+			expectedError: `^networking\.clusterNetworkMTU: Invalid value: 9002: cluster network MTU exceeds the maximum value of 9001$`,
+		},
+		{
+			name: "networking clusterNetworkMTU - invalid for non-aws",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking.NetworkType = string(operv1.NetworkTypeOVNKubernetes)
+				c.Networking.ClusterNetworkMTU = 8901
+				c.Platform = types.Platform{
+					None: &none.Platform{},
+				}
+				return c
+			}(),
+			expectedError: `^networking\.clusterNetworkMTU: Invalid value: 8901: cluster network MTU is allowed only in AWS deployments`,
+		},
+		{
+			name: "networking clusterNetworkMTU - unsupported network type",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking.NetworkType = string(operv1.NetworkTypeOpenShiftSDN)
+				c.Networking.ClusterNetworkMTU = 8000
+				return c
+			}(),
+			expectedError: `networking.networkType: Invalid value: "OpenShiftSDN": networkType OpenShiftSDN is not supported, please use OVNKubernetes, networking.clusterNetworkMTU: Invalid value: 8000: cluster network MTU is not valid with network plugin OpenShiftSDN`,
 		},
 		{
 			name: "missing control plane",
@@ -514,16 +637,16 @@ func TestValidateInstallConfig(t *testing.T) {
 				c.Platform = types.Platform{}
 				return c
 			}(),
-			expectedError: `^platform: Invalid value: "": must specify one of the platforms \(aws, azure, baremetal, gcp, ibmcloud, kubevirt, none, openstack, ovirt, vsphere\)$`,
+			expectedError: `^platform: Invalid value: "": must specify one of the platforms \(aws, azure, baremetal, external, gcp, ibmcloud, none, nutanix, openstack, powervs, vsphere\)$`,
 		},
 		{
 			name: "multiple platforms",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
-				c.Platform.Libvirt = validLibvirtPlatform()
+				c.Platform.IBMCloud = validIBMCloudPlatform()
 				return c
 			}(),
-			expectedError: `^platform: Invalid value: "aws": must only specify a single type of platform; cannot use both "aws" and "libvirt"$`,
+			expectedError: `^platform: Invalid value: "aws": must only specify a single type of platform; cannot use both "aws" and "ibmcloud"$`,
 		},
 		{
 			name: "invalid aws platform",
@@ -535,29 +658,6 @@ func TestValidateInstallConfig(t *testing.T) {
 				return c
 			}(),
 			expectedError: `^platform\.aws\.region: Required value: region must be specified$`,
-		},
-		{
-			name: "valid libvirt platform",
-			installConfig: func() *types.InstallConfig {
-				c := validInstallConfig()
-				c.Platform = types.Platform{
-					Libvirt: validLibvirtPlatform(),
-				}
-				return c
-			}(),
-			expectedError: `^platform: Invalid value: "libvirt": must specify one of the platforms \(aws, azure, baremetal, gcp, ibmcloud, kubevirt, none, openstack, ovirt, vsphere\)$`,
-		},
-		{
-			name: "invalid libvirt platform",
-			installConfig: func() *types.InstallConfig {
-				c := validInstallConfig()
-				c.Platform = types.Platform{
-					Libvirt: validLibvirtPlatform(),
-				}
-				c.Platform.Libvirt.URI = ""
-				return c
-			}(),
-			expectedError: `^\[platform: Invalid value: "libvirt": must specify one of the platforms \(aws, azure, baremetal, gcp, ibmcloud, kubevirt, none, openstack, ovirt, vsphere\), platform\.libvirt\.uri: Invalid value: "": invalid URI "" \(no scheme\)]$`,
 		},
 		{
 			name: "valid none platform",
@@ -580,21 +680,11 @@ func TestValidateInstallConfig(t *testing.T) {
 			}(),
 		},
 		{
-			name: "invalid openstack platform",
-			installConfig: func() *types.InstallConfig {
-				c := validInstallConfig()
-				c.Platform = types.Platform{
-					OpenStack: validOpenStackPlatform(),
-				}
-				c.Platform.OpenStack.APIVIP = "123.456.789.000"
-				return c
-			}(),
-			expectedError: `^platform\.openstack\.apiVIP: Invalid value: "123.456.789.000": "123.456.789.000" is not a valid IP$`,
-		},
-		{
 			name: "valid baremetal platform",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
+				c.Capabilities = &types.Capabilities{BaselineCapabilitySet: "v4.11"}
+				c.Capabilities.AdditionalEnabledCapabilities = append(c.Capabilities.AdditionalEnabledCapabilities, configv1.ClusterVersionCapabilityIngress, configv1.ClusterVersionCapabilityCloudCredential, configv1.ClusterVersionCapabilityCloudControllerManager, configv1.ClusterVersionCapabilityOperatorLifecycleManager)
 				c.Platform = types.Platform{
 					BareMetal: validBareMetalPlatform(),
 				}
@@ -602,65 +692,6 @@ func TestValidateInstallConfig(t *testing.T) {
 			}(),
 		},
 		{
-			name: "invalid baremetal platform",
-			installConfig: func() *types.InstallConfig {
-				c := validInstallConfig()
-				c.Platform = types.Platform{
-					BareMetal: validBareMetalPlatform(),
-				}
-				c.Platform.BareMetal.APIVIP = ""
-				return c
-			}(),
-			expectedError: `^\[platform\.baremetal\.apiVIP: Invalid value: "": "" is not a valid IP, platform\.baremetal\.apiVIP: Invalid value: "": IP expected to be in one of the machine networks: 10.0.0.0/16]$`,
-		},
-		{
-			name: "baremetal API VIP not an IP",
-			installConfig: func() *types.InstallConfig {
-				c := validInstallConfig()
-				c.Platform = types.Platform{
-					BareMetal: validBareMetalPlatform(),
-				}
-				c.Platform.BareMetal.APIVIP = "test"
-				return c
-			}(),
-			expectedError: `^\[platform\.baremetal\.apiVIP: Invalid value: "test": "test" is not a valid IP, platform\.baremetal\.apiVIP: Invalid value: "test": IP expected to be in one of the machine networks: 10.0.0.0/16]$`,
-		},
-		{
-			name: "baremetal API VIP set to an incorrect value",
-			installConfig: func() *types.InstallConfig {
-				c := validInstallConfig()
-				c.Platform = types.Platform{
-					BareMetal: validBareMetalPlatform(),
-				}
-				c.Platform.BareMetal.APIVIP = "10.1.0.5"
-				return c
-			}(),
-			expectedError: `^platform\.baremetal\.apiVIP: Invalid value: "10\.1\.0\.5": IP expected to be in one of the machine networks: 10.0.0.0/16$`,
-		},
-		{
-			name: "baremetal Ingress VIP not an IP",
-			installConfig: func() *types.InstallConfig {
-				c := validInstallConfig()
-				c.Platform = types.Platform{
-					BareMetal: validBareMetalPlatform(),
-				}
-				c.Platform.BareMetal.IngressVIP = "test"
-				return c
-			}(),
-			expectedError: `^\[platform\.baremetal\.ingressVIP: Invalid value: "test": "test" is not a valid IP, platform\.baremetal\.ingressVIP: Invalid value: "test": IP expected to be in one of the machine networks: 10.0.0.0/16]$`,
-		},
-		{
-			name: "baremetal Ingress VIP set to an incorrect value",
-			installConfig: func() *types.InstallConfig {
-				c := validInstallConfig()
-				c.Platform = types.Platform{
-					BareMetal: validBareMetalPlatform(),
-				}
-				c.Platform.BareMetal.IngressVIP = "10.1.0.7"
-				return c
-			}(),
-			expectedError: `^platform\.baremetal\.ingressVIP: Invalid value: "10\.1\.0\.7": IP expected to be in one of the machine networks: 10.0.0.0/16$`,
-		}, {
 			name: "valid vsphere platform",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
@@ -677,10 +708,10 @@ func TestValidateInstallConfig(t *testing.T) {
 				c.Platform = types.Platform{
 					VSphere: validVSpherePlatform(),
 				}
-				c.Platform.VSphere.VCenter = ""
+				c.Platform.VSphere.VCenters[0].Server = ""
 				return c
 			}(),
-			expectedError: `^platform\.vsphere.vCenter: Required value: must specify the name of the vCenter$`,
+			expectedError: `platform\.vsphere\.vcenters\.server: Required value: must be the domain name or IP address of the vCenter(.*)`,
 		},
 		{
 			name: "invalid vsphere folder",
@@ -689,10 +720,22 @@ func TestValidateInstallConfig(t *testing.T) {
 				c.Platform = types.Platform{
 					VSphere: validVSpherePlatform(),
 				}
-				c.Platform.VSphere.Folder = "my-folder"
+				c.Platform.VSphere.FailureDomains[0].Topology.Folder = "my-folder"
 				return c
 			}(),
-			expectedError: `^platform\.vsphere.folder: Invalid value: \"my-folder\": folder must be absolute path: expected prefix /test-datacenter/vm/$`,
+			expectedError: `^platform\.vsphere\.failureDomains\.topology.folder: Invalid value: "my-folder": full path of folder must be provided in format /<datacenter>/vm/<folder>$`,
+		},
+		{
+			name: "invalid vsphere resource pool",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					VSphere: validVSpherePlatform(),
+				}
+				c.Platform.VSphere.FailureDomains[0].Topology.ResourcePool = "my-resource-pool"
+				return c
+			}(),
+			expectedError: `^platform\.vsphere\.failureDomains\.topology\.resourcePool: Invalid value: "my-resource-pool": full path of resource pool must be provided in format /<datacenter>/host/<cluster>/\.\.\.$`,
 		},
 		{
 			name: "empty proxy settings",
@@ -935,7 +978,7 @@ func TestValidateInstallConfig(t *testing.T) {
 				c.Proxy.NoProxy = "good-no-proxy.com,*.bad-proxy"
 				return c
 			}(),
-			expectedError: `^\Qproxy.noProxy: Invalid value: "good-no-proxy.com,*.bad-proxy": each element of noProxy must be a CIDR or domain without wildcard characters, which is violated by element 1 "*.bad-proxy"\E$`,
+			expectedError: `^\Qproxy.noProxy: Invalid value: "good-no-proxy.com,*.bad-proxy": each element of noProxy must be a IP, CIDR or domain without wildcard characters, which is violated by element 1 "*.bad-proxy"\E$`,
 		},
 		{
 			name: "invalid NoProxy spaces",
@@ -944,7 +987,7 @@ func TestValidateInstallConfig(t *testing.T) {
 				c.Proxy.NoProxy = "good-no-proxy.com, *.bad-proxy"
 				return c
 			}(),
-			expectedError: `^\Q[proxy.noProxy: Invalid value: "good-no-proxy.com, *.bad-proxy": noProxy must not have spaces, proxy.noProxy: Invalid value: "good-no-proxy.com, *.bad-proxy": each element of noProxy must be a CIDR or domain without wildcard characters, which is violated by element 1 "*.bad-proxy"]\E$`,
+			expectedError: `^\Q[proxy.noProxy: Invalid value: "good-no-proxy.com, *.bad-proxy": noProxy must not have spaces, proxy.noProxy: Invalid value: "good-no-proxy.com, *.bad-proxy": each element of noProxy must be a IP, CIDR or domain without wildcard characters, which is violated by element 1 "*.bad-proxy"]\E$`,
 		},
 		{
 			name: "invalid NoProxy CIDR",
@@ -953,7 +996,7 @@ func TestValidateInstallConfig(t *testing.T) {
 				c.Proxy.NoProxy = "good-no-proxy.com,172.bad.CIDR.0/16"
 				return c
 			}(),
-			expectedError: `^\Qproxy.noProxy: Invalid value: "good-no-proxy.com,172.bad.CIDR.0/16": each element of noProxy must be a CIDR or domain without wildcard characters, which is violated by element 1 "172.bad.CIDR.0/16"\E$`,
+			expectedError: `^\Qproxy.noProxy: Invalid value: "good-no-proxy.com,172.bad.CIDR.0/16": each element of noProxy must be a IP, CIDR or domain without wildcard characters, which is violated by element 1 "172.bad.CIDR.0/16"\E$`,
 		},
 		{
 			name: "invalid NoProxy domain & CIDR",
@@ -962,7 +1005,7 @@ func TestValidateInstallConfig(t *testing.T) {
 				c.Proxy.NoProxy = "good-no-proxy.com,a-good-one,*.bad-proxy.,another,172.bad.CIDR.0/16,good-end"
 				return c
 			}(),
-			expectedError: `^\Q[proxy.noProxy: Invalid value: "good-no-proxy.com,a-good-one,*.bad-proxy.,another,172.bad.CIDR.0/16,good-end": each element of noProxy must be a CIDR or domain without wildcard characters, which is violated by element 2 "*.bad-proxy.", proxy.noProxy: Invalid value: "good-no-proxy.com,a-good-one,*.bad-proxy.,another,172.bad.CIDR.0/16,good-end": each element of noProxy must be a CIDR or domain without wildcard characters, which is violated by element 4 "172.bad.CIDR.0/16"]\E$`,
+			expectedError: `^\Q[proxy.noProxy: Invalid value: "good-no-proxy.com,a-good-one,*.bad-proxy.,another,172.bad.CIDR.0/16,good-end": each element of noProxy must be a IP, CIDR or domain without wildcard characters, which is violated by element 2 "*.bad-proxy.", proxy.noProxy: Invalid value: "good-no-proxy.com,a-good-one,*.bad-proxy.,another,172.bad.CIDR.0/16,good-end": each element of noProxy must be a IP, CIDR or domain without wildcard characters, which is violated by element 4 "172.bad.CIDR.0/16"]\E$`,
 		},
 		{
 			name: "valid * NoProxy",
@@ -1016,6 +1059,54 @@ func TestValidateInstallConfig(t *testing.T) {
 			expectedError: `^\Qplatform.ibmcloud.region: Required value: region must be specified\E$`,
 		},
 		{
+			name: "valid powervs platform",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.SSHKey = validSSHKey()
+				c.Platform = types.Platform{
+					PowerVS: validPowerVSPlatform(),
+				}
+				return c
+			}(),
+		},
+		{
+			name: "valid powervs platform manual credential mod",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.SSHKey = validSSHKey()
+				c.Platform = types.Platform{
+					PowerVS: validPowerVSPlatform(),
+				}
+				c.CredentialsMode = types.ManualCredentialsMode
+				return c
+			}(),
+		},
+		{
+			name: "invalid powervs platform mint credential mod",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.SSHKey = validSSHKey()
+				c.Platform = types.Platform{
+					PowerVS: validPowerVSPlatform(),
+				}
+				c.CredentialsMode = types.MintCredentialsMode
+				return c
+			}(),
+			expectedError: `^credentialsMode: Unsupported value: "Mint": supported values: "Manual"$`,
+		},
+		{
+			name: "invalid powervs platform",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.SSHKey = validSSHKey()
+				c.Platform = types.Platform{
+					PowerVS: &powervs.Platform{},
+				}
+				return c
+			}(),
+			expectedError: `^\Qplatform.powervs.zone: Required value: zone must be specified\E$`,
+		},
+		{
 			name: "valid azurestack platform",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
@@ -1038,33 +1129,44 @@ func TestValidateInstallConfig(t *testing.T) {
 			expectedError: `^credentialsMode: Unsupported value: "Mint": supported values: "Manual"$`,
 		},
 		{
-			name: "release image source is not canonical",
+			name: "release image source is not valid",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
-				c.ImageContentSources = []types.ImageContentSource{{
+				c.DeprecatedImageContentSources = []types.ImageContentSource{{
 					Source: "ocp/release-x.y",
 				}}
 				return c
 			}(),
-			expectedError: `^imageContentSources\[0\]\.source: Invalid value: "ocp/release-x\.y": failed to parse: repository name must be canonical$`,
+			expectedError: `^imageContentSources\[0\]\.source: Invalid value: "ocp/release-x\.y": the repository provided is invalid: a lowercase RFC 1123 subdomain must consist of lower case alphanumeric characters, \'\-\' or \'\.\', and must start and end with an alphanumeric character \(e.g. \'example\.com\', regex used for validation is \'\[a\-z0\-9\]\(\[\-a\-z0\-9\]\*\[a\-z0\-9\]\)\?\(\\\.\[a\-z0\-9\]\(\[\-a\-z0\-9\]\*\[a\-z0\-9\]\)\?\)\*\'\)`,
 		},
 		{
-			name: "release image source's mirror is not canonical",
+			name: "release image source's mirror is not valid",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
-				c.ImageContentSources = []types.ImageContentSource{{
+				c.DeprecatedImageContentSources = []types.ImageContentSource{{
 					Source:  "q.io/ocp/release-x.y",
 					Mirrors: []string{"ocp/openshift-x.y"},
 				}}
 				return c
 			}(),
-			expectedError: `^imageContentSources\[0\]\.mirrors\[0\]: Invalid value: "ocp/openshift-x\.y": failed to parse: repository name must be canonical$`,
+			expectedError: `^imageContentSources\[0\]\.mirrors\[0\]: Invalid value: "ocp/openshift-x\.y": the repository provided is invalid: a lowercase RFC 1123 subdomain must consist of lower case alphanumeric characters, \'\-\' or \'\.\', and must start and end with an alphanumeric character \(e.g. \'example\.com\', regex used for validation is \'\[a\-z0\-9\]\(\[\-a\-z0\-9\]\*\[a\-z0\-9\]\)\?\(\\\.\[a\-z0\-9\]\(\[\-a\-z0\-9\]\*\[a\-z0\-9\]\)\?\)\*\'\)`,
+		},
+		{
+			name: "release image source's mirror is valid",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.DeprecatedImageContentSources = []types.ImageContentSource{{
+					Source:  "q.io/ocp/release-x.y",
+					Mirrors: []string{"mirror.example.com:5000"},
+				}}
+				return c
+			}(),
 		},
 		{
 			name: "release image source is not repository but reference by digest",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
-				c.ImageContentSources = []types.ImageContentSource{{
+				c.DeprecatedImageContentSources = []types.ImageContentSource{{
 					Source: "quay.io/ocp/release-x.y@sha256:397c867cc10bcc90cf05ae9b71dd3de6000535e27cb6c704d9f503879202582c",
 				}}
 				return c
@@ -1075,7 +1177,7 @@ func TestValidateInstallConfig(t *testing.T) {
 			name: "release image source is not repository but reference by tag",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
-				c.ImageContentSources = []types.ImageContentSource{{
+				c.DeprecatedImageContentSources = []types.ImageContentSource{{
 					Source: "quay.io/ocp/release-x.y:latest",
 				}}
 				return c
@@ -1086,11 +1188,92 @@ func TestValidateInstallConfig(t *testing.T) {
 			name: "valid release image source",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
-				c.ImageContentSources = []types.ImageContentSource{{
+				c.DeprecatedImageContentSources = []types.ImageContentSource{{
 					Source: "quay.io/ocp/release-x.y",
 				}}
 				return c
 			}(),
+		},
+		{
+			name: "release image source is not valid ImageDigestSource",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.ImageDigestSources = []types.ImageDigestSource{{
+					Source: "ocp/release-x.y",
+				}}
+				return c
+			}(),
+			expectedError: `^imageDigestSources\[0\]\.source: Invalid value: "ocp/release-x\.y": the repository provided is invalid: a lowercase RFC 1123 subdomain must consist of lower case alphanumeric characters, \'\-\' or \'\.\', and must start and end with an alphanumeric character \(e.g. \'example\.com\', regex used for validation is \'\[a\-z0\-9\]\(\[\-a\-z0\-9\]\*\[a\-z0\-9\]\)\?\(\\\.\[a\-z0\-9\]\(\[\-a\-z0\-9\]\*\[a\-z0\-9\]\)\?\)\*\'\)`,
+		},
+		{
+			name: "release image source's mirror is not valid ImageDigestSource",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.ImageDigestSources = []types.ImageDigestSource{{
+					Source:  "q.io/ocp/release-x.y",
+					Mirrors: []string{"ocp/openshift-x.y"},
+				}}
+				return c
+			}(),
+			expectedError: `^imageDigestSources\[0\]\.mirrors\[0\]: Invalid value: "ocp/openshift-x\.y": the repository provided is invalid: a lowercase RFC 1123 subdomain must consist of lower case alphanumeric characters, \'\-\' or \'\.\', and must start and end with an alphanumeric character \(e.g. \'example\.com\', regex used for validation is \'\[a\-z0\-9\]\(\[\-a\-z0\-9\]\*\[a\-z0\-9\]\)\?\(\\\.\[a\-z0\-9\]\(\[\-a\-z0\-9\]\*\[a\-z0\-9\]\)\?\)\*\'\)`,
+		},
+		{
+			name: "release image source's mirror is valid ImageDigestSource",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.ImageDigestSources = []types.ImageDigestSource{{
+					Source:  "q.io/ocp/release-x.y",
+					Mirrors: []string{"mirror.example.com:5000"},
+				}}
+				return c
+			}(),
+		},
+		{
+			name: "release image source is not repository but reference by digest ImageDigestSource",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.ImageDigestSources = []types.ImageDigestSource{{
+					Source: "quay.io/ocp/release-x.y@sha256:397c867cc10bcc90cf05ae9b71dd3de6000535e27cb6c704d9f503879202582c",
+				}}
+				return c
+			}(),
+			expectedError: `^imageDigestSources\[0\]\.source: Invalid value: "quay\.io/ocp/release-x\.y@sha256:397c867cc10bcc90cf05ae9b71dd3de6000535e27cb6c704d9f503879202582c": must be repository--not reference$`,
+		},
+		{
+			name: "release image source is not repository but reference by tag ImageDigestSource",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.ImageDigestSources = []types.ImageDigestSource{{
+					Source: "quay.io/ocp/release-x.y:latest",
+				}}
+				return c
+			}(),
+			expectedError: `^imageDigestSources\[0\]\.source: Invalid value: "quay\.io/ocp/release-x\.y:latest": must be repository--not reference$`,
+		},
+		{
+			name: "valid release image source ImageDigstSourrce",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.ImageDigestSources = []types.ImageDigestSource{{
+					Source: "quay.io/ocp/release-x.y",
+				}}
+				return c
+			}(),
+		},
+		{
+			name: "error out ImageContentSources and ImageDigestSources and are set at the same time",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.DeprecatedImageContentSources = []types.ImageContentSource{{
+					Source:  "q.io/ocp/source",
+					Mirrors: []string{"ocp/openshift/mirror"},
+				}}
+				c.ImageDigestSources = []types.ImageDigestSource{{
+					Source:  "q.io/ocp/source",
+					Mirrors: []string{"ocp-digest/openshift/mirror"}}}
+				return c
+			}(),
+			expectedError: `cannot set imageContentSources and imageDigestSources at the same time`,
 		},
 		{
 			name: "invalid publishing strategy",
@@ -1139,28 +1322,6 @@ func TestValidateInstallConfig(t *testing.T) {
 				return c
 			}(),
 			expectedError: `Invalid value: "IPv6": single-stack IPv6 is not supported for this platform`,
-		},
-		{
-			name: "invalid dual-stack configuration, bad plugin",
-			installConfig: func() *types.InstallConfig {
-				c := validInstallConfig()
-				c.Platform = types.Platform{None: &none.Platform{}}
-				c.Networking = validDualStackNetworkingConfig()
-				c.Networking.NetworkType = "OpenShiftSDN"
-				return c
-			}(),
-			expectedError: `IPv6 is not supported for this networking plugin`,
-		},
-		{
-			name: "invalid single-stack IPv6 configuration, bad plugin",
-			installConfig: func() *types.InstallConfig {
-				c := validInstallConfig()
-				c.Platform = types.Platform{None: &none.Platform{}}
-				c.Networking = validIPv6NetworkingConfig()
-				c.Networking.NetworkType = "OpenShiftSDN"
-				return c
-			}(),
-			expectedError: `IPv6 is not supported for this networking plugin`,
 		},
 		{
 			name: "invalid dual-stack configuration, machine has no IPv6",
@@ -1225,17 +1386,6 @@ func TestValidateInstallConfig(t *testing.T) {
 			}(),
 			expectedError: `Invalid value: "ffd1::/48": subnet size for IPv6 service network should be /112`,
 		},
-
-		{
-			name: "valid ovirt platform",
-			installConfig: func() *types.InstallConfig {
-				c := validInstallConfig()
-				c.Platform = types.Platform{
-					Ovirt: validOvirtPlatform(),
-				}
-				return c
-			}(),
-		},
 		{
 			name: "architecture is not supported",
 			installConfig: func() *types.InstallConfig {
@@ -1266,6 +1416,27 @@ func TestValidateInstallConfig(t *testing.T) {
 			expectedError: `^compute\[0\].architecture: Invalid value: "arm64": heteregeneous multi-arch is not supported; compute pool architecture must match control plane$`,
 		},
 		{
+			name: "aws cluster is heteregeneous",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Compute[0].Architecture = types.ArchitectureARM64
+				c.FeatureSet = "CustomNoUpgrade"
+				c.FeatureGates = []string{"MultiArchInstallAWS=true"}
+				return c
+			}(),
+		},
+		{
+			name: "gcp cluster is heteregeneous",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{GCP: validGCPPlatform()}
+				c.Compute[0].Architecture = types.ArchitectureARM64
+				c.FeatureSet = "CustomNoUpgrade"
+				c.FeatureGates = []string{"MultiArchInstallGCP=true"}
+				return c
+			}(),
+		},
+		{
 			name: "valid cloud credentials mode",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
@@ -1278,6 +1449,7 @@ func TestValidateInstallConfig(t *testing.T) {
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
 				c.Platform = types.Platform{BareMetal: validBareMetalPlatform()}
+				c.Capabilities = &types.Capabilities{BaselineCapabilitySet: configv1.ClusterVersionCapabilitySetCurrent}
 				c.CredentialsMode = types.PassthroughCredentialsMode
 				return c
 			}(),
@@ -1302,16 +1474,6 @@ func TestValidateInstallConfig(t *testing.T) {
 			expectedError: ``,
 		},
 		{
-			name: "docker bridge not allowed with libvirt",
-			installConfig: func() *types.InstallConfig {
-				c := validInstallConfig()
-				c.Platform = types.Platform{Libvirt: validLibvirtPlatform()}
-				c.Networking.MachineNetwork = []types.MachineNetworkEntry{{CIDR: *ipnet.MustParseCIDR("172.17.64.0/18")}}
-				return c
-			}(),
-			expectedError: `\Q[networking.machineNewtork[0]: Invalid value: "172.17.64.0/18": overlaps with default Docker Bridge subnet, platform: Invalid value: "libvirt": must specify one of the platforms (\E.*\Q)]\E`,
-		},
-		{
 			name: "publish internal for non-cloud platform",
 			installConfig: func() *types.InstallConfig {
 				c := validInstallConfig()
@@ -1329,15 +1491,976 @@ func TestValidateInstallConfig(t *testing.T) {
 				c.Publish = types.InternalPublishingStrategy
 				return c
 			}(),
+		}, {
+			name: "valid nutanix platform",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					Nutanix: validNutanixPlatform(),
+				}
+				return c
+			}(),
+		}, {
+			name: "invalid nutanix platform",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					Nutanix: validNutanixPlatform(),
+				}
+				c.Platform.Nutanix.PrismCentral.Endpoint.Address = ""
+				return c
+			}(),
+			expectedError: `^platform\.nutanix\.prismCentral\.endpoint\.address: Required value: must specify the Prism Central endpoint address$`,
+		},
+		{
+			name: "invalid credentials mode for nutanix",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					Nutanix: validNutanixPlatform(),
+				}
+				c.CredentialsMode = types.PassthroughCredentialsMode
+				return c
+			}(),
+			expectedError: `credentialsMode: Unsupported value: "Passthrough": supported values: "Manual"$`,
+		},
+		{
+			name: "valid credentials mode for nutanix",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					Nutanix: validNutanixPlatform(),
+				}
+				c.CredentialsMode = types.ManualCredentialsMode
+				return c
+			}(),
+		},
+		{
+			name: "valid baseline capability set",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Capabilities = &types.Capabilities{BaselineCapabilitySet: "v4.11"}
+				c.Capabilities.AdditionalEnabledCapabilities = append(c.Capabilities.AdditionalEnabledCapabilities, configv1.ClusterVersionCapabilityCloudCredential, configv1.ClusterVersionCapabilityCloudControllerManager, configv1.ClusterVersionCapabilityIngress, configv1.ClusterVersionCapabilityOperatorLifecycleManager)
+				return c
+			}(),
+		},
+		{
+			name: "invalid empty string baseline capability set",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Capabilities = &types.Capabilities{BaselineCapabilitySet: ""}
+				return c
+			}(),
+			expectedError: `capabilities.baselineCapabilitySet: Unsupported value: "": supported values: .*`,
+		},
+		{
+			name: "invalid baseline capability set specified",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Capabilities = &types.Capabilities{BaselineCapabilitySet: "vNotValid"}
+				return c
+			}(),
+			expectedError: `capabilities.baselineCapabilitySet: Unsupported value: "vNotValid": supported values: .*`,
+		},
+		{
+			name: "invalid capability marketplace specified without OperatorLifecycleManager",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Capabilities = &types.Capabilities{BaselineCapabilitySet: "None",
+					AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{"marketplace"}}
+				return c
+			}(),
+			expectedError: `additionalEnabledCapabilities: Invalid value: \[\]v1.ClusterVersionCapability{"marketplace"}: the marketplace capability requires the OperatorLifecycleManager capability`,
+		},
+		{
+			name: "valid additional enabled capability specified",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Capabilities = &types.Capabilities{BaselineCapabilitySet: "v4.11"}
+				c.Capabilities.AdditionalEnabledCapabilities = append(c.Capabilities.AdditionalEnabledCapabilities, configv1.ClusterVersionCapabilityCloudCredential, configv1.ClusterVersionCapabilityOpenShiftSamples, configv1.ClusterVersionCapabilityCloudControllerManager, configv1.ClusterVersionCapabilityIngress, configv1.ClusterVersionCapabilityOperatorLifecycleManager)
+				return c
+			}(),
+		},
+		{
+			name: "invalid empty additional enabled capability specified",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Capabilities = &types.Capabilities{BaselineCapabilitySet: "v4.11",
+					AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{""}}
+				return c
+			}(),
+			expectedError: `capabilities.additionalEnabledCapabilities\[0\]: Unsupported value: "": supported values: .*`,
+		},
+		{
+			name: "invalid additional enabled capability specified",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Capabilities = &types.Capabilities{BaselineCapabilitySet: "v4.11",
+					AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{"not-valid"}}
+				return c
+			}(),
+			expectedError: `capabilities.additionalEnabledCapabilities\[0\]: Unsupported value: "not-valid": supported values: .*`,
+		},
+		{
+			name: "baremetal platform requires the baremetal capability",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Capabilities = &types.Capabilities{BaselineCapabilitySet: "None", AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{"marketplace"}}
+				return c
+			}(),
+			expectedError: `additionalEnabledCapabilities: Invalid value: \[\]v1.ClusterVersionCapability{"marketplace"}: platform baremetal requires the baremetal capability`,
+		},
+		//VIP tests
+		{
+			name: "apivip_v4_not_in_machinenetwork_cidr",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking.MachineNetwork = []types.MachineNetworkEntry{
+					{CIDR: *ipnet.MustParseCIDR("10.0.0.0/16")},
+					{CIDR: *ipnet.MustParseCIDR("fe80::/10")},
+				}
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.APIVIPs = []string{"192.168.222.1"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.apiVIPs: Invalid value: \"192.168.222.1\": IP expected to be in one of the machine networks: 10.0.0.0/16,fe80::/10",
+		},
+		{
+			name: "apivip_v4_not_in_machinenetwork_cidr_usermanaged_loadbalancer",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.FeatureSet = configv1.TechPreviewNoUpgrade
+				c.Networking.MachineNetwork = []types.MachineNetworkEntry{
+					{CIDR: *ipnet.MustParseCIDR("10.0.0.0/16")},
+					{CIDR: *ipnet.MustParseCIDR("fe80::/10")},
+				}
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.LoadBalancer = &configv1.BareMetalPlatformLoadBalancer{Type: configv1.LoadBalancerTypeUserManaged}
+				c.Platform.BareMetal.APIVIPs = []string{"192.168.222.1"}
+
+				return c
+			}(),
+		},
+		{
+			name: "apivip_v6_not_in_machinenetwork_cidr",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking.MachineNetwork = []types.MachineNetworkEntry{
+					{CIDR: *ipnet.MustParseCIDR("10.0.0.0/16")},
+					{CIDR: *ipnet.MustParseCIDR("fe80::/10")},
+				}
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.APIVIPs = []string{"2001::1"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.apiVIPs: Invalid value: \"2001::1\": IP expected to be in one of the machine networks: 10.0.0.0/16,fe80::/10",
+		},
+		{
+			name: "apivips_v6_on_openshiftsdn",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking = validIPv6NetworkingConfig()
+				c.Networking.NetworkType = string(operv1.NetworkTypeOpenShiftSDN)
+
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.APIVIPs = []string{"ffd0::1"}
+
+				return c
+			}(),
+			expectedError: "[networking.networkType: Invalid value: \"OpenShiftSDN\": networkType OpenShiftSDN is not supported, please use OVNKubernetes, platform.baremetal.ingressVIPs: Invalid value: \"10.0.0.4\": IP expected to be in one of the machine networks: ffd0::/48]",
+		},
+		{
+			name: "ingressvips_v6_on_openshiftsdn",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking = validIPv6NetworkingConfig()
+				c.Networking.NetworkType = string(operv1.NetworkTypeOpenShiftSDN)
+
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.IngressVIPs = []string{"ffd0::1"}
+
+				return c
+			}(),
+			expectedError: "[networking.networkType: Invalid value: \"OpenShiftSDN\": networkType OpenShiftSDN is not supported, please use OVNKubernetes, platform.baremetal.apiVIPs: Invalid value: \"10.0.0.5\": IP expected to be in one of the machine networks: ffd0::/48]",
+		},
+		{
+			name: "too_many_apivips",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.APIVIPs = []string{"fe80::1", "fe80::2", "fe80::3"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.apiVIPs: Too many: 3: must have at most 2 items",
+		},
+		{
+			name: "invalid_apivip",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.APIVIPs = []string{""}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.apiVIPs: Invalid value: \"\": \"\" is not a valid IP",
+		},
+		{
+			name: "invalid_apivip_2",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.APIVIPs = []string{"123.456.789.000"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.apiVIPs: Invalid value: \"123.456.789.000\": \"123.456.789.000\" is not a valid IP",
+		},
+		{
+			name: "invalid_apivip_format",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.APIVIPs = []string{"foobar"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.apiVIPs: Invalid value: \"foobar\": \"foobar\" is not a valid IP",
+		},
+		{
+			name: "invalid_apivip_format_one_of_many",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.APIVIPs = []string{"192.168.1.0", "foobar"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.apiVIPs: Invalid value: \"foobar\": \"foobar\" is not a valid IP",
+		},
+		{
+			name: "invalid_apivips_both_ipv4",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.APIVIPs = []string{"192.168.111.1", "192.168.111.2"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.apiVIPs: Invalid value: \\[\\]string\\{\"192.168.111.1\", \"192.168.111.2\"\\}: If two API VIPs are given, one must be an IPv4 address, the other an IPv6",
+		},
+		{
+			name: "invalid_apis_both_ipv6",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.APIVIPs = []string{"fe80::1", "fe80::2"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.apiVIPs: Invalid value: \\[\\]string\\{\"fe80::1\", \"fe80::2\"\\}: If two API VIPs are given, one must be an IPv4 address, the other an IPv6",
+		},
+		{
+			name: "ingressvip_v4_not_in_machinenetwork_cidr",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking.MachineNetwork = []types.MachineNetworkEntry{
+					{CIDR: *ipnet.MustParseCIDR("10.0.0.0/16")},
+					{CIDR: *ipnet.MustParseCIDR("fe80::/10")},
+				}
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.IngressVIPs = []string{"192.168.222.4"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.ingressVIPs: Invalid value: \"192.168.222.4\": IP expected to be in one of the machine networks: 10.0.0.0/16,fe80::/10",
+		},
+		{
+			name: "ingressvip_v6_not_in_machinenetwork_cidr",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking.MachineNetwork = []types.MachineNetworkEntry{
+					{CIDR: *ipnet.MustParseCIDR("10.0.0.0/16")},
+					{CIDR: *ipnet.MustParseCIDR("fe80::/10")},
+				}
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.IngressVIPs = []string{"2001::1"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.ingressVIPs: Invalid value: \"2001::1\": IP expected to be in one of the machine networks: 10.0.0.0/16,fe80::/10",
+		},
+		{
+			name: "vsphere_ingressvip_v4_not_in_machinenetwork_cidr",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking.MachineNetwork = []types.MachineNetworkEntry{
+					{CIDR: *ipnet.MustParseCIDR("10.0.0.0/16")},
+					{CIDR: *ipnet.MustParseCIDR("fe80::/10")},
+				}
+				c.Platform = types.Platform{
+					VSphere: validVSpherePlatform(),
+				}
+				c.Platform.VSphere.IngressVIPs = []string{"192.168.222.4"}
+				c.Platform.VSphere.APIVIPs = []string{"192.168.1.0"}
+
+				return c
+			}(),
+		},
+		{
+			name: "too_many_ingressvips",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.IngressVIPs = []string{"fe80::1", "fe80::2", "fe80::3"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.ingressVIPs: Too many: 3: must have at most 2 items",
+		},
+		{
+			name: "invalid_ingressvip",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.IngressVIPs = []string{""}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.ingressVIPs: Invalid value: \"\": \"\" is not a valid IP",
+		},
+		{
+			name: "invalid_ingressvip_format",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.IngressVIPs = []string{"foobar"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.ingressVIPs: Invalid value: \"foobar\": \"foobar\" is not a valid IP",
+		},
+		{
+			name: "invalid_ingressvip_format_one_of_many",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.IngressVIPs = []string{"192.1.1.1", "foobar"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.ingressVIPs: Invalid value: \"foobar\": \"foobar\" is not a valid IP",
+		},
+		{
+			name: "invalid_ingressvips_both_ipv4",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.IngressVIPs = []string{"192.168.111.4", "192.168.111.5"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.ingressVIPs: Invalid value: \\[\\]string\\{\"192.168.111.4\", \"192.168.111.5\"\\}: If two Ingress VIPs are given, one must be an IPv4 address, the other an IPv6",
+		},
+		{
+			name: "invalid_ingressvips_both_ipv6",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.IngressVIPs = []string{"fe80::1", "fe80::2"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.ingressVIPs: Invalid value: \\[\\]string\\{\"fe80::1\", \"fe80::2\"\\}: If two Ingress VIPs are given, one must be an IPv4 address, the other an IPv6",
+		},
+		{
+			name: "identical_apivip_ingressvip",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.APIVIPs = []string{"fe80::1"}
+				c.Platform.BareMetal.IngressVIPs = []string{"fe80::1"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.apiVIPs: Invalid value: \"fe80::1\": VIP for API must not be one of the Ingress VIPs",
+		},
+		{
+			name: "identical_apivip_ingressvip_usermanaged_loadbalancer",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.FeatureSet = configv1.TechPreviewNoUpgrade
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.LoadBalancer = &configv1.BareMetalPlatformLoadBalancer{Type: configv1.LoadBalancerTypeUserManaged}
+				c.Platform.BareMetal.APIVIPs = []string{"fe80::1"}
+				c.Platform.BareMetal.IngressVIPs = []string{"fe80::1"}
+
+				return c
+			}(),
+		},
+		{
+			name: "identical_apivips_ingressvips_multiple_ips",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.APIVIPs = []string{"fe80::1", "192.1.2.3"}
+				c.Platform.BareMetal.IngressVIPs = []string{"fe80::1", "192.1.2.4"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.apiVIPs: Invalid value: \"fe80::1\": VIP for API must not be one of the Ingress VIPs",
+		},
+		{
+			name: "apivip_ingressvip_are_synonyms",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.APIVIPs = []string{"2001:db8::5"}
+				c.Platform.BareMetal.IngressVIPs = []string{"2001:db8:0::5"}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.apiVIPs: Invalid value: \"2001:db8::5\": VIP for API must not be one of the Ingress VIPs",
+		},
+		{
+			name: "empty_api_vip_fields",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.DeprecatedAPIVIP = ""
+				c.Platform.BareMetal.APIVIPs = []string{}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.apiVIPs: Required value: must specify at least one VIP for the API",
+		},
+		{
+			name: "empty_ingress_vip_fields",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.DeprecatedIngressVIP = ""
+				c.Platform.BareMetal.IngressVIPs = []string{}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.ingressVIPs: Required value: must specify at least one VIP for the Ingress",
+		},
+		{
+			name: "baremetal API VIP set to an incorrect IP Family",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking = validDualStackNetworkingConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.APIVIPs = []string{"ffd0::"}
+				return c
+			}(),
+			expectedError: `platform.baremetal.apiVIPs: Invalid value: "ffd0::": VIP for the API must be of the same IP family with machine network's primary IP Family for dual-stack IPv4/IPv6`,
+		},
+		{
+			name: "baremetal Ingress VIP set to an incorrect IP Family",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Networking = validDualStackNetworkingConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.IngressVIPs = []string{"ffd0::"}
+				return c
+			}(),
+			expectedError: `platform.baremetal.ingressVIPs: Invalid value: "ffd0::": VIP for the Ingress must be of the same IP family with machine network's primary IP Family for dual-stack IPv4/IPv6`,
+		},
+		{
+			name: "should validate vips on baremetal (required)",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					BareMetal: validBareMetalPlatform(),
+				}
+				c.Platform.BareMetal.DeprecatedAPIVIP = ""
+				c.Platform.BareMetal.APIVIPs = []string{}
+
+				return c
+			}(),
+			expectedError: "platform.baremetal.apiVIPs: Required value: must specify at least one VIP for the API",
+		},
+		{
+			name: "should validate vips on OpenStack (vips are required on openstack)",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					OpenStack: validOpenStackPlatform(),
+				}
+				c.Platform.OpenStack.DeprecatedAPIVIP = ""
+				c.Platform.OpenStack.APIVIPs = []string{}
+
+				return c
+			}(),
+			expectedError: "platform.openstack.apiVIPs: Required value: must specify at least one VIP for the API",
+		},
+		// {
+		// 	name: "should not validate vips on OpenStack if not set (vips are not required on openstack)",
+		// 	installConfig: func() *types.InstallConfig {
+		// 		c := validInstallConfig()
+		// 		c.Platform = types.Platform{
+		// 			OpenStack: validOpenStackPlatform(),
+		// 		}
+		// 		c.Platform.OpenStack.DeprecatedAPIVIP = ""
+		// 		c.Platform.OpenStack.APIVIPs = []string{}
+
+		// 		return c
+		// 	}(),
+		// },
+		{
+			name: "should validate vips on OpenStack if set (vips are not required on openstack)",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					OpenStack: validOpenStackPlatform(),
+				}
+				c.Platform.OpenStack.APIVIPs = []string{"foobar"}
+
+				return c
+			}(),
+			expectedError: "platform.openstack.apiVIPs: Invalid value: \"foobar\": \"foobar\" is not a valid IP",
+		},
+		{
+			name: "should not validate vips on VSphere if not set (vips are not required on VSphere)",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					VSphere: validVSpherePlatform(),
+				}
+				c.Platform.VSphere.DeprecatedAPIVIP = ""
+				c.Platform.VSphere.APIVIPs = []string{}
+
+				return c
+			}(),
+		},
+		{
+			name: "should validate vips on VSphere if set (vips are not required on VSphere)",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					VSphere: validVSpherePlatform(),
+				}
+				c.Platform.VSphere.APIVIPs = []string{"foobar"}
+
+				return c
+			}(),
+			expectedError: "platform.vsphere.apiVIPs: Invalid value: \"foobar\": \"foobar\" is not a valid IP",
+		},
+		{
+			name: "should not validate vips on Nutanix if not set (vips are not required on Nutanix)",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					Nutanix: validNutanixPlatform(),
+				}
+				c.Platform.Nutanix.DeprecatedAPIVIP = ""
+				c.Platform.Nutanix.APIVIPs = []string{}
+
+				return c
+			}(),
+		},
+		{
+			name: "should validate vips on Nutanix if set (vips are not required on Nutanix)",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					Nutanix: validNutanixPlatform(),
+				}
+				c.Platform.Nutanix.APIVIPs = []string{"foobar"}
+
+				return c
+			}(),
+			expectedError: "platform.nutanix.apiVIPs: Invalid value: \"foobar\": \"foobar\" is not a valid IP",
+		},
+		{
+			name: "should return error if only API VIP is set",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					VSphere: validVSpherePlatform(),
+				}
+				c.Platform.VSphere.APIVIPs = []string{"10.0.0.1"}
+				c.Platform.VSphere.IngressVIPs = []string{}
+
+				return c
+			}(),
+			expectedError: "platform.vsphere.ingressVIPs: Required value: must specify VIP for ingress, when VIP for API is set",
+		},
+		{
+			name: "should return error if only Ingress VIP is set",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform = types.Platform{
+					VSphere: validVSpherePlatform(),
+				}
+				c.Platform.VSphere.APIVIPs = []string{}
+				c.Platform.VSphere.IngressVIPs = []string{"10.0.0.1"}
+
+				return c
+			}(),
+			expectedError: "platform.vsphere.apiVIPs: Required value: must specify VIP for API, when VIP for ingress is set",
+		},
+		{
+			name: "valid custom features",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.FeatureSet = configv1.CustomNoUpgrade
+				c.FeatureGates = []string{
+					"CustomFeature1=True",
+					"CustomFeature2=False",
+				}
+				return c
+			}(),
+		},
+		{
+			name: "invalid custom features",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.FeatureSet = configv1.CustomNoUpgrade
+				c.FeatureGates = []string{
+					"CustomFeature1=True",
+					"CustomFeature2",
+				}
+				return c
+			}(),
+			expectedError: `featureGates\[1\]: Invalid value: "CustomFeature2": must match the format <feature-name>=<bool>`,
+		},
+		{
+			name: "invalid custom features bool",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.FeatureSet = configv1.CustomNoUpgrade
+				c.FeatureGates = []string{
+					"CustomFeature1=foo",
+					"CustomFeature2=False",
+				}
+				return c
+			}(),
+			expectedError: `featureGates\[0\]: Invalid value: "CustomFeature1=foo": must match the format <feature-name>=<bool>, could not parse boolean value`,
+		},
+		{
+			name: "custom features supplied with non-custom featureset",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.FeatureSet = configv1.TechPreviewNoUpgrade
+				c.FeatureGates = []string{
+					"CustomFeature1=True",
+					"CustomFeature2=False",
+				}
+				return c
+			}(),
+			expectedError: "featureGates: Forbidden: featureGates can only be used with the CustomNoUpgrade feature set",
+		},
+		{
+			name: "valid disabled MAPI with baseline none and baremetal enabled",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Capabilities = &types.Capabilities{
+					BaselineCapabilitySet:         configv1.ClusterVersionCapabilitySetNone,
+					AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{configv1.ClusterVersionCapabilityBaremetal, configv1.ClusterVersionCapabilityIngress, configv1.ClusterVersionCapabilityCloudCredential, configv1.ClusterVersionCapabilityCloudControllerManager},
+				}
+				return c
+			}(),
+		},
+		{
+			name: "valid disabled MAPI capability configuration",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Capabilities = &types.Capabilities{
+					BaselineCapabilitySet: configv1.ClusterVersionCapabilitySetNone,
+				}
+				c.Capabilities.AdditionalEnabledCapabilities = append(c.Capabilities.AdditionalEnabledCapabilities, configv1.ClusterVersionCapabilityCloudCredential, configv1.ClusterVersionCapabilityCloudControllerManager, configv1.ClusterVersionCapabilityIngress)
+				return c
+			}(),
+		},
+		{
+			name: "valid enabled MAPI capability configuration",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Capabilities = &types.Capabilities{
+					BaselineCapabilitySet:         configv1.ClusterVersionCapabilitySetNone,
+					AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{configv1.ClusterVersionCapabilityBaremetal, configv1.ClusterVersionCapabilityMachineAPI, configv1.ClusterVersionCapabilityCloudCredential, configv1.ClusterVersionCapabilityCloudControllerManager, configv1.ClusterVersionCapabilityIngress},
+				}
+				return c
+			}(),
+		},
+		{
+			name: "valid enabled MAPI capability configuration 2",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Capabilities = &types.Capabilities{
+					BaselineCapabilitySet:         configv1.ClusterVersionCapabilitySetNone,
+					AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{configv1.ClusterVersionCapabilityMachineAPI, configv1.ClusterVersionCapabilityCloudCredential, configv1.ClusterVersionCapabilityCloudControllerManager, configv1.ClusterVersionCapabilityIngress},
+				}
+				return c
+			}(),
+		},
+		{
+			name: "CloudCredential is enabled in cloud",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Capabilities = &types.Capabilities{
+					BaselineCapabilitySet: configv1.ClusterVersionCapabilitySetCurrent,
+				}
+				return c
+			}(),
+		},
+		{
+			name: "CloudCredential is disabled in cloud aws",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Capabilities = &types.Capabilities{
+					BaselineCapabilitySet: configv1.ClusterVersionCapabilitySetNone,
+				}
+				return c
+			}(),
+			expectedError: "disabling CloudCredential capability available only for baremetal platforms",
+		},
+		{
+			name: "CloudCredential is disabled in cloud gcp",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.GCP = validGCPPlatform()
+				c.AWS = nil
+				c.Capabilities = &types.Capabilities{
+					BaselineCapabilitySet: configv1.ClusterVersionCapabilitySetNone,
+				}
+				return c
+			}(),
+			expectedError: "disabling CloudCredential capability available only for baremetal platforms",
+		},
+		{
+			name: "CloudCredential is enabled in baremetal",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.BareMetal = validBareMetalPlatform()
+				c.AWS = nil
+				c.Capabilities = &types.Capabilities{
+					BaselineCapabilitySet: configv1.ClusterVersionCapabilitySetCurrent,
+				}
+				return c
+			}(),
+		},
+		{
+			name: "CloudCredential is disabled in baremetal",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.BareMetal = validBareMetalPlatform()
+				c.AWS = nil
+				c.Capabilities = &types.Capabilities{
+					BaselineCapabilitySet:         configv1.ClusterVersionCapabilitySetNone,
+					AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{configv1.ClusterVersionCapabilityBaremetal, configv1.ClusterVersionCapabilityMachineAPI, configv1.ClusterVersionCapabilityIngress},
+				}
+				return c
+			}(),
+		},
+		{
+			name: "CloudController can't be disabled on cloud",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Capabilities = &types.Capabilities{
+					BaselineCapabilitySet: configv1.ClusterVersionCapabilitySetNone,
+				}
+				return c
+			}(),
+			expectedError: "disabling CloudControllerManager is only supported on the Baremetal, None, or External platform with cloudControllerManager value none",
+		},
+		{
+			name: "valid disabled CloudController configuration none platform",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform.AWS = nil
+				c.Platform.None = &none.Platform{}
+				c.Capabilities = &types.Capabilities{
+					BaselineCapabilitySet:         configv1.ClusterVersionCapabilitySetNone,
+					AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{configv1.ClusterVersionCapabilityIngress},
+				}
+				return c
+			}(),
+		},
+		{
+			name: "valid disabled CloudController configuration platform baremetal",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform.AWS = nil
+				c.Platform.BareMetal = validBareMetalPlatform()
+				c.Capabilities = &types.Capabilities{
+					BaselineCapabilitySet:         configv1.ClusterVersionCapabilitySetNone,
+					AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{configv1.ClusterVersionCapabilityBaremetal, configv1.ClusterVersionCapabilityMachineAPI, configv1.ClusterVersionCapabilityIngress},
+				}
+				return c
+			}(),
+		},
+		{
+			name: "valid disabled CloudController configuration platform External",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform.AWS = nil
+				c.Platform.External = &external.Platform{}
+				c.Capabilities = &types.Capabilities{
+					BaselineCapabilitySet:         configv1.ClusterVersionCapabilitySetNone,
+					AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{configv1.ClusterVersionCapabilityCloudCredential, configv1.ClusterVersionCapabilityIngress},
+				}
+				return c
+			}(),
+		},
+		{
+			name: "valid disabled CloudController configuration platform External 2",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform.AWS = nil
+				c.Platform.External = &external.Platform{
+					CloudControllerManager: external.CloudControllerManagerTypeNone,
+				}
+				c.Capabilities = &types.Capabilities{
+					BaselineCapabilitySet:         configv1.ClusterVersionCapabilitySetNone,
+					AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{configv1.ClusterVersionCapabilityCloudCredential, configv1.ClusterVersionCapabilityIngress},
+				}
+				return c
+			}(),
+		},
+		{
+			name: "invalid disabled CloudController configuration platform External 2",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Platform.AWS = nil
+				c.Platform.External = &external.Platform{
+					CloudControllerManager: external.CloudControllerManagerTypeExternal,
+				}
+				c.Capabilities = &types.Capabilities{
+					BaselineCapabilitySet:         configv1.ClusterVersionCapabilitySetNone,
+					AdditionalEnabledCapabilities: []configv1.ClusterVersionCapability{configv1.ClusterVersionCapabilityCloudCredential},
+				}
+				return c
+			}(),
+			expectedError: "disabling CloudControllerManager on External platform supported only with cloudControllerManager value none",
+		},
+		{
+			name: "Ingress can't be disabled",
+			installConfig: func() *types.InstallConfig {
+				c := validInstallConfig()
+				c.Capabilities = &types.Capabilities{
+					BaselineCapabilitySet: configv1.ClusterVersionCapabilitySetNone,
+				}
+				return c
+			}(),
+			expectedError: "the Ingress capability is required",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateInstallConfig(tc.installConfig).ToAggregate()
+			err := ValidateInstallConfig(tc.installConfig, false).ToAggregate()
 			if tc.expectedError == "" {
 				assert.NoError(t, err)
 			} else {
 				assert.Regexp(t, tc.expectedError, err)
+			}
+		})
+	}
+}
+
+func Test_ensureIPv4IsFirstInDualStackSlice(t *testing.T) {
+	tests := []struct {
+		name    string
+		vips    []string
+		want    []string
+		wantErr bool
+	}{
+		{
+			name:    "should switch VIPs",
+			vips:    []string{"fe80::0", "192.168.1.1"},
+			want:    []string{"192.168.1.1", "fe80::0"},
+			wantErr: false,
+		},
+		{
+			name:    "should do nothing on single stack",
+			vips:    []string{"192.168.1.1"},
+			want:    []string{"192.168.1.1"},
+			wantErr: false,
+		},
+		{
+			name:    "should do nothing on correct order",
+			vips:    []string{"192.168.1.1", "fe80::0"},
+			want:    []string{"192.168.1.1", "fe80::0"},
+			wantErr: false,
+		},
+		{
+			name:    "return error on invalid number of vips",
+			vips:    []string{"192.168.1.1", "fe80::0", "192.168.1.1"},
+			want:    nil,
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ensureIPv4IsFirstInDualStackSlice(&tt.vips, field.NewPath("test")); (len(err) > 0) != tt.wantErr {
+				t.Errorf("ensureIPv4IsFirstInDualStackSlice() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && !utilsslice.Equal(tt.vips, tt.want) && len(tt.vips) == 2 {
+				t.Errorf("ensureIPv4IsFirstInDualStackSlice() changed to %v, expected %v", tt.vips, tt.want)
 			}
 		})
 	}

@@ -1,6 +1,7 @@
 package machine
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,8 +18,8 @@ import (
 
 // TestMasterGenerate tests generating the master asset.
 func TestMasterGenerate(t *testing.T) {
-	installConfig := &installconfig.InstallConfig{
-		Config: &types.InstallConfig{
+	installConfig := installconfig.MakeAsset(
+		&types.InstallConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-cluster",
 			},
@@ -35,18 +36,17 @@ func TestMasterGenerate(t *testing.T) {
 				Name:     "master",
 				Replicas: pointer.Int64Ptr(3),
 			},
-		},
-	}
+		})
 
 	rootCA := &tls.RootCA{}
-	err := rootCA.Generate(nil)
+	err := rootCA.Generate(context.Background(), nil)
 	assert.NoError(t, err, "unexpected error generating root CA")
 
 	parents := asset.Parents{}
 	parents.Add(installConfig, rootCA)
 
 	master := &Master{}
-	err = master.Generate(parents)
+	err = master.Generate(context.Background(), parents)
 	assert.NoError(t, err, "unexpected error generating master asset")
 	expectedIgnitionConfigNames := []string{
 		"master.ign",

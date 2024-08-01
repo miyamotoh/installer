@@ -23,8 +23,14 @@ The following options are available when using Azure:
 * `osDisk` (optional object):
     * `diskSizeGB` (optional integer): The size of the disk in gigabytes (GB).
     * `diskType` (optional string): The type of disk (allowed values are: `Premium_LRS`, `Standard_LRS`, and `StandardSSD_LRS`).
+* `diskEncryptionSet` (optional object):
+    * `subscriptionId` (required string): The subscription ID of the disk encryption set.
+    * `resourceGroup` (required string): The resource group of the disk encryption set.
+    * `name` (required string): The name of the disk encryption set.
+* `encryptionAtHost` (optional bool): enables encryption at host
 * `type` (optional string): The Azure instance type.
 * `zones` (optional string slice): List of Azure availability zones that can be used (for example, `["1", "2", "3"]`).
+* `acceleratedNetworking` (optional string): Whether to enable AcceleratedNetworking on hosts (allowed values are: `Accelerated`, `Basic`).
 
 ## Installing to Existing Resource Group
 
@@ -38,7 +44,7 @@ The installer can use an existing VNet and subnets when provisioning an OpenShif
 
 ### Cluster Isolation
 
-When pre-existing subnets are provided, the installer will not create a network security group (NSG) or alter an existing one attached to the subnet. This restriction means that no security rules are created. If multiple clusters are installed to the same VNet and isolation is desired, it must be enforced through an administrative task after the cluster is installed.
+When pre-existing subnets are provided, the installer will not create a network security group (NSG) or alter an existing one attached to the subnet. Because cluster components do not modify the user-provided network security groups, which the Kubernetes controllers update, a pseudo-network security group is created for the Kubernetes controller to modify without impacting the rest of the environment. If multiple clusters are installed to the same VNet and isolation is desired, it must be enforced through an administrative task after the cluster is installed.
 
 ## Examples
 
@@ -97,9 +103,6 @@ platform:
   azure:
     region: centralus
     baseDomainResourceGroupName: os4-common
-    osDisk:
-        diskSizeGB: 512
-        diskType: Premium_LRS
 pullSecret: '{"auths": ...}'
 sshKey: ssh-ed25519 AAAA...
 ```

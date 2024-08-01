@@ -10,21 +10,21 @@ import (
 	baremetaldefaults "github.com/openshift/installer/pkg/types/baremetal/defaults"
 	gcpdefaults "github.com/openshift/installer/pkg/types/gcp/defaults"
 	ibmclouddefaults "github.com/openshift/installer/pkg/types/ibmcloud/defaults"
-	kubevirtdefaults "github.com/openshift/installer/pkg/types/kubevirt/defaults"
-	libvirtdefaults "github.com/openshift/installer/pkg/types/libvirt/defaults"
 	nonedefaults "github.com/openshift/installer/pkg/types/none/defaults"
+	nutanixdefaults "github.com/openshift/installer/pkg/types/nutanix/defaults"
 	openstackdefaults "github.com/openshift/installer/pkg/types/openstack/defaults"
 	ovirtdefaults "github.com/openshift/installer/pkg/types/ovirt/defaults"
+	powervsdefaults "github.com/openshift/installer/pkg/types/powervs/defaults"
 	vspheredefaults "github.com/openshift/installer/pkg/types/vsphere/defaults"
 )
 
 var (
-	defaultMachineCIDR    = ipnet.MustParseCIDR("10.0.0.0/16")
+	// DefaultMachineCIDR default machine CIDR applied to MachineNetwork.
+	DefaultMachineCIDR    = ipnet.MustParseCIDR("10.0.0.0/16")
 	defaultServiceNetwork = ipnet.MustParseCIDR("172.30.0.0/16")
 	defaultClusterNetwork = ipnet.MustParseCIDR("10.128.0.0/14")
 	defaultHostPrefix     = 23
-	defaultNetworkType    = string(operv1.NetworkTypeOpenShiftSDN)
-	defaultOKDNetworkType = string(operv1.NetworkTypeOVNKubernetes)
+	defaultNetworkType    = string(operv1.NetworkTypeOVNKubernetes)
 )
 
 // SetInstallConfigDefaults sets the defaults for the install config.
@@ -34,20 +34,11 @@ func SetInstallConfigDefaults(c *types.InstallConfig) {
 	}
 	if len(c.Networking.MachineNetwork) == 0 {
 		c.Networking.MachineNetwork = []types.MachineNetworkEntry{
-			{CIDR: *defaultMachineCIDR},
-		}
-		if c.Platform.Libvirt != nil {
-			c.Networking.MachineNetwork = []types.MachineNetworkEntry{
-				{CIDR: *libvirtdefaults.DefaultMachineCIDR},
-			}
+			{CIDR: *DefaultMachineCIDR},
 		}
 	}
 	if c.Networking.NetworkType == "" {
-		if c.IsOKD() {
-			c.Networking.NetworkType = defaultOKDNetworkType
-		} else {
-			c.Networking.NetworkType = defaultNetworkType
-		}
+		c.Networking.NetworkType = defaultNetworkType
 	}
 	if len(c.Networking.ServiceNetwork) == 0 {
 		c.Networking.ServiceNetwork = []ipnet.IPNet{*defaultServiceNetwork}
@@ -70,8 +61,16 @@ func SetInstallConfigDefaults(c *types.InstallConfig) {
 	}
 	c.ControlPlane.Name = "master"
 	SetMachinePoolDefaults(c.ControlPlane, c.Platform.Name())
-	if len(c.Compute) == 0 {
-		c.Compute = []types.MachinePool{{Name: "worker"}}
+
+	defaultComputePoolUndefined := true
+	for _, compute := range c.Compute {
+		if compute.Name == types.MachinePoolComputeRoleName {
+			defaultComputePoolUndefined = false
+			break
+		}
+	}
+	if defaultComputePoolUndefined {
+		c.Compute = append(c.Compute, types.MachinePool{Name: types.MachinePoolComputeRoleName})
 	}
 	for i := range c.Compute {
 		SetMachinePoolDefaults(&c.Compute[i], c.Platform.Name())
@@ -79,6 +78,10 @@ func SetInstallConfigDefaults(c *types.InstallConfig) {
 
 	if c.CredentialsMode == "" {
 		if c.Platform.Azure != nil && c.Platform.Azure.CloudName == azure.StackCloud {
+			c.CredentialsMode = types.ManualCredentialsMode
+		} else if c.Platform.Nutanix != nil {
+			c.CredentialsMode = types.ManualCredentialsMode
+		} else if c.Platform.PowerVS != nil {
 			c.CredentialsMode = types.ManualCredentialsMode
 		}
 	}
@@ -92,8 +95,6 @@ func SetInstallConfigDefaults(c *types.InstallConfig) {
 		gcpdefaults.SetPlatformDefaults(c.Platform.GCP)
 	case c.Platform.IBMCloud != nil:
 		ibmclouddefaults.SetPlatformDefaults(c.Platform.IBMCloud)
-	case c.Platform.Libvirt != nil:
-		libvirtdefaults.SetPlatformDefaults(c.Platform.Libvirt)
 	case c.Platform.OpenStack != nil:
 		openstackdefaults.SetPlatformDefaults(c.Platform.OpenStack, c.Networking)
 	case c.Platform.VSphere != nil:
@@ -106,9 +107,18 @@ func SetInstallConfigDefaults(c *types.InstallConfig) {
 		for i := range c.Compute {
 			ovirtdefaults.SetComputeDefaults(c.Platform.Ovirt, &c.Compute[i])
 		}
-	case c.Platform.Kubevirt != nil:
-		kubevirtdefaults.SetPlatformDefaults(c.Platform.Kubevirt)
+	case c.Platform.PowerVS != nil:
+		powervsdefaults.SetPlatformDefaults(c.Platform.PowerVS)
+		c.Networking.MachineNetwork = []types.MachineNetworkEntry{
+			{CIDR: *powervsdefaults.DefaultMachineCIDR},
+		}
 	case c.Platform.None != nil:
 		nonedefaults.SetPlatformDefaults(c.Platform.None)
+	case c.Platform.Nutanix != nil:
+		nutanixdefaults.SetPlatformDefaults(c.Platform.Nutanix)
+	}
+
+	if c.AdditionalTrustBundlePolicy == "" {
+		c.AdditionalTrustBundlePolicy = types.PolicyProxyOnly
 	}
 }

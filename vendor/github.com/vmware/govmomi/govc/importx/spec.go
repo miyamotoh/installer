@@ -1,11 +1,11 @@
 /*
-Copyright (c) 2015-2016 VMware, Inc. All Rights Reserved.
+Copyright (c) 2015-2023 VMware, Inc. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -60,7 +60,7 @@ type spec struct {
 	*flags.ClientFlag
 	*flags.OutputFlag
 
-	verbose bool
+	hidden bool
 }
 
 func init() {
@@ -76,7 +76,7 @@ func (cmd *spec) Register(ctx context.Context, f *flag.FlagSet) {
 	cmd.OutputFlag, ctx = flags.NewOutputFlag(ctx)
 	cmd.OutputFlag.Register(ctx, f)
 
-	f.BoolVar(&cmd.verbose, "verbose", false, "Verbose spec output")
+	f.BoolVar(&cmd.hidden, "hidden", false, "Enable hidden properties")
 }
 
 func (cmd *spec) Process(ctx context.Context) error {
@@ -111,7 +111,7 @@ func (cmd *spec) Run(ctx context.Context, f *flag.FlagSet) error {
 			return fmt.Errorf("invalid file extension %s", path.Ext(fpath))
 		}
 
-		if isRemotePath(fpath) {
+		if isRemotePath(f.Arg(0)) {
 			client, err := cmd.Client()
 			if err != nil {
 				return err
@@ -151,7 +151,10 @@ func (cmd *spec) Map(e *ovf.Envelope) (res []Property) {
 
 	for _, p := range e.VirtualSystem.Product {
 		for i, v := range p.Property {
-			if v.UserConfigurable == nil || !*v.UserConfigurable {
+			if v.UserConfigurable == nil {
+				continue
+			}
+			if !*v.UserConfigurable && !cmd.hidden {
 				continue
 			}
 
@@ -165,18 +168,9 @@ func (cmd *spec) Map(e *ovf.Envelope) (res []Property) {
 				d = strings.Title(d)
 			}
 
-			// From OVF spec, section 9.5.1:
-			// key-value-env = [class-value "."] key-value-prod ["." instance-value]
-			k := v.Key
-			if p.Class != nil {
-				k = fmt.Sprintf("%s.%s", *p.Class, k)
-			}
-			if p.Instance != nil {
-				k = fmt.Sprintf("%s.%s", k, *p.Instance)
-			}
+			np := Property{KeyValue: KeyValue{Key: p.Key(v), Value: d}}
 
-			np := Property{KeyValue: types.KeyValue{Key: k, Value: d}}
-			if cmd.verbose {
+			if cmd.Verbose() {
 				np.Spec = &p.Property[i]
 			}
 
@@ -243,7 +237,7 @@ func (cmd *spec) Spec(fpath string) (*Options, error) {
 		}
 	}
 
-	if cmd.verbose {
+	if cmd.Verbose() {
 		if deploymentOptions != nil {
 			o.AllDeploymentOptions = deploymentOptions
 		}

@@ -2,9 +2,10 @@
 package aws
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/iam"
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
 	ccaws "github.com/openshift/cloud-credential-operator/pkg/aws"
@@ -32,6 +33,21 @@ const (
 	// PermissionDeleteSharedInstanceRole is a set of permissions required when the installer destroys resources from a
 	// cluster with user-supplied IAM roles for instances.
 	PermissionDeleteSharedInstanceRole PermissionGroup = "delete-shared-instance-role"
+
+	// PermissionCreateHostedZone is a set of permissions required when the installer creates a route53 hosted zone.
+	PermissionCreateHostedZone PermissionGroup = "create-hosted-zone"
+
+	// PermissionDeleteHostedZone is a set of permissions required when the installer destroys a route53 hosted zone.
+	PermissionDeleteHostedZone PermissionGroup = "delete-hosted-zone"
+
+	// PermissionKMSEncryptionKeys is an additional set of permissions required when the installer uses user provided kms encryption keys.
+	PermissionKMSEncryptionKeys PermissionGroup = "kms-encryption-keys"
+
+	// PermissionPublicIpv4Pool is an additional set of permissions required when the installer uses public IPv4 pools.
+	PermissionPublicIpv4Pool PermissionGroup = "public-ipv4-pool"
+
+	// PermissionDeleteIgnitionObjects is a permission set required when `preserveBootstrapIgnition` is not set.
+	PermissionDeleteIgnitionObjects PermissionGroup = "delete-ignition-objects"
 )
 
 var permissions = map[PermissionGroup][]string{
@@ -66,6 +82,7 @@ var permissions = map[PermissionGroup][]string{
 		"ec2:DescribeRegions",
 		"ec2:DescribeRouteTables",
 		"ec2:DescribeSecurityGroups",
+		"ec2:DescribeSecurityGroupRules",
 		"ec2:DescribeSubnets",
 		"ec2:DescribeTags",
 		"ec2:DescribeVolumes",
@@ -107,6 +124,7 @@ var permissions = map[PermissionGroup][]string{
 		"elasticloadbalancing:RegisterInstancesWithLoadBalancer",
 		"elasticloadbalancing:RegisterTargets",
 		"elasticloadbalancing:SetLoadBalancerPoliciesOfListener",
+		"elasticloadbalancing:SetSecurityGroups",
 
 		// IAM related perms
 		"iam:AddRoleToInstanceProfile",
@@ -126,13 +144,12 @@ var permissions = map[PermissionGroup][]string{
 		"iam:PutRolePolicy",
 		"iam:RemoveRoleFromInstanceProfile",
 		"iam:SimulatePrincipalPolicy",
+		"iam:TagInstanceProfile",
 		"iam:TagRole",
 
 		// Route53 related perms
 		"route53:ChangeResourceRecordSets",
 		"route53:ChangeTagsForResource",
-		"route53:CreateHostedZone",
-		"route53:DeleteHostedZone",
 		"route53:GetChange",
 		"route53:GetHostedZone",
 		"route53:ListHostedZones",
@@ -143,14 +160,13 @@ var permissions = map[PermissionGroup][]string{
 
 		// S3 related perms
 		"s3:CreateBucket",
-		"s3:DeleteBucket",
 		"s3:GetAccelerateConfiguration",
 		"s3:GetBucketAcl",
 		"s3:GetBucketCors",
 		"s3:GetBucketLocation",
 		"s3:GetBucketLogging",
 		"s3:GetBucketObjectLockConfiguration",
-		"s3:GetBucketReplication",
+		"s3:GetBucketPolicy",
 		"s3:GetBucketRequestPayment",
 		"s3:GetBucketTagging",
 		"s3:GetBucketVersioning",
@@ -160,11 +176,11 @@ var permissions = map[PermissionGroup][]string{
 		"s3:GetReplicationConfiguration",
 		"s3:ListBucket",
 		"s3:PutBucketAcl",
+		"s3:PutBucketPolicy",
 		"s3:PutBucketTagging",
 		"s3:PutEncryptionConfiguration",
 
 		// More S3 (would be nice to limit 'Resource' to just the bucket we actually interact with...)
-		"s3:DeleteObject",
 		"s3:GetObject",
 		"s3:GetObjectAcl",
 		"s3:GetObjectTagging",
@@ -177,6 +193,7 @@ var permissions = map[PermissionGroup][]string{
 	PermissionDeleteBase: {
 		"autoscaling:DescribeAutoScalingGroups",
 		"ec2:DeleteNetworkInterface",
+		"ec2:DeletePlacementGroup",
 		"ec2:DeleteTags",
 		"ec2:DeleteVolume",
 		"elasticloadbalancing:DeleteTargetGroup",
@@ -187,6 +204,7 @@ var permissions = map[PermissionGroup][]string{
 		"iam:ListInstanceProfiles",
 		"iam:ListRolePolicies",
 		"iam:ListUserPolicies",
+		"s3:DeleteBucket",
 		"s3:DeleteObject",
 		"s3:ListBucketVersions",
 		"tag:GetResources",
@@ -232,6 +250,34 @@ var permissions = map[PermissionGroup][]string{
 	PermissionDeleteSharedInstanceRole: {
 		"iam:UntagRole",
 	},
+	PermissionCreateHostedZone: {
+		"route53:CreateHostedZone",
+	},
+	PermissionDeleteHostedZone: {
+		"route53:DeleteHostedZone",
+	},
+	PermissionKMSEncryptionKeys: {
+		"kms:Decrypt",
+		"kms:Encrypt",
+		"kms:GenerateDataKey",
+		"kms:GenerateDataKeyWithoutPlainText",
+		"kms:DescribeKey",
+		"kms:RevokeGrant",
+		"kms:CreateGrant",
+		"kms:ListGrants",
+	},
+	PermissionPublicIpv4Pool: {
+		// Needed to check the IP pools during install-config validation
+		"ec2:DescribePublicIpv4Pools",
+		// Needed by terraform because of bootstrap EIP created
+		"ec2:DisassociateAddress",
+	},
+	PermissionDeleteIgnitionObjects: {
+		// Needed by terraform during the bootstrap destroy stage.
+		"s3:DeleteBucket",
+		// Needed by capa which always deletes the ignition objects once the VMs are up.
+		"s3:DeleteObject",
+	},
 }
 
 // ValidateCreds will try to create an AWS session, and also verify that the current credentials
@@ -244,15 +290,12 @@ func ValidateCreds(ssn *session.Session, groups []PermissionGroup, region string
 	for _, group := range groups {
 		groupPerms, ok := permissions[group]
 		if !ok {
-			return errors.Errorf("unable to access permissions group %s", group)
+			return fmt.Errorf("unable to access permissions group %s", group)
 		}
 		requiredPermissions = append(requiredPermissions, groupPerms...)
 	}
 
-	client, err := ccaws.NewClientFromIAMClient(iam.New(ssn))
-	if err != nil {
-		return errors.Wrap(err, "failed to create client for permission check")
-	}
+	client := ccaws.NewClientFromSession(ssn)
 
 	sParams := &ccaws.SimulateParams{
 		Region: region,
@@ -262,7 +305,7 @@ func ValidateCreds(ssn *session.Session, groups []PermissionGroup, region string
 	logger := logrus.StandardLogger()
 	canInstall, err := ccaws.CheckPermissionsAgainstActions(client, requiredPermissions, sParams, logger)
 	if err != nil {
-		return errors.Wrap(err, "checking install permissions")
+		return fmt.Errorf("checking install permissions: %w", err)
 	}
 	if !canInstall {
 		return errors.New("current credentials insufficient for performing cluster installation")
@@ -271,7 +314,7 @@ func ValidateCreds(ssn *session.Session, groups []PermissionGroup, region string
 	// Check whether we can mint new creds for cluster services needing to interact with the cloud
 	canMint, err := ccaws.CheckCloudCredCreation(client, logger)
 	if err != nil {
-		return errors.Wrap(err, "mint credentials check")
+		return fmt.Errorf("mint credentials check: %w", err)
 	}
 	if canMint {
 		return nil
@@ -281,7 +324,7 @@ func ValidateCreds(ssn *session.Session, groups []PermissionGroup, region string
 	// cluster services needing to interact with the cloud
 	canPassthrough, err := ccaws.CheckCloudCredPassthrough(client, sParams, logger)
 	if err != nil {
-		return errors.Wrap(err, "passthrough credentials check")
+		return fmt.Errorf("passthrough credentials check: %w", err)
 	}
 	if canPassthrough {
 		return nil

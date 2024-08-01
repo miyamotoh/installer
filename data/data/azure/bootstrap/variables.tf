@@ -37,9 +37,9 @@ variable "resource_group_name" {
   description = "The resource group name for the deployment."
 }
 
-variable "storage_account" {
-  type        = any
-  description = "the storage account for the cluster. It can be used for boot diagnostics."
+variable "storage_account_name" {
+  type        = string
+  description = "the name of the storage account for the cluster. It can be used for boot diagnostics."
 }
 
 variable "vm_image" {
@@ -52,12 +52,12 @@ variable "identity" {
   description = "The user assigned identity id for the vm."
 }
 
-variable "outbound_udr" {
-  type    = bool
-  default = false
+variable "outbound_type" {
+  type    = string
+  default = "Loadbalancer"
 
   description = <<EOF
-This determined whether User defined routing will be used for egress to
+This determined the routing type that will be used for egress to
 Internet.
 When false, Standard LB will be used for egress to the Internet.
 

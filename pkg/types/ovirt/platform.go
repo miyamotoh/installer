@@ -1,5 +1,9 @@
 package ovirt
 
+import (
+	configv1 "github.com/openshift/api/config/v1"
+)
+
 // Platform stores all the global configuration that all
 // machinesets use.
 type Platform struct {
@@ -20,12 +24,41 @@ type Platform struct {
 	// +optional
 	VNICProfileID string `json:"vnicProfileID,omitempty"`
 
-	// APIVIP is an IP which will be served by bootstrap and then pivoted masters, using keepalived
-	APIVIP string `json:"api_vip"`
+	// DeprecatedAPIVIP is an IP which will be served by bootstrap and then pivoted masters, using keepalived
+	// Deprecated: Use APIVIPs
+	//
+	// +kubebuilder:validation:Format=ip
+	// +optional
+	DeprecatedAPIVIP string `json:"api_vip,omitempty"`
+
+	// APIVIPs contains the VIP(s) which will be served by bootstrap and then
+	// pivoted masters, using keepalived. In dual stack clusters it contains an
+	// IPv4 and IPv6 address, otherwise only one VIP
+	//
+	// +kubebuilder:validation:MaxItems=2
+	// +kubebuilder:validation:UniqueItems=true
+	// +kubebuilder:validation:Format=ip
+	// +optional
+	APIVIPs []string `json:"api_vips,omitempty"`
 
 	// IngressIP is an external IP which routes to the default ingress controller.
 	// The IP is a suitable target of a wildcard DNS record used to resolve default route host names.
-	IngressVIP string `json:"ingress_vip"`
+	// Deprecated: Use IngressVIPs
+	//
+	// +kubebuilder:validation:Format=ip
+	// +optional
+	DeprecatedIngressVIP string `json:"ingress_vip,omitempty"`
+
+	// IngressVIPs are external IP(s) which route to the default ingress
+	// controller. The VIPs are suitable targets of wildcard DNS records used to
+	// resolve default route host names. In dual stack clusters it contains an
+	// IPv4 and IPv6 address, otherwise only one VIP
+	//
+	// +kubebuilder:validation:MaxItems=2
+	// +kubebuilder:validation:UniqueItems=true
+	// +kubebuilder:validation:Format=ip
+	// +optional
+	IngressVIPs []string `json:"ingress_vips,omitempty"`
 
 	// DefaultMachinePlatform is the default configuration used when
 	// installing on ovirt for machine pools which do not define their
@@ -37,6 +70,11 @@ type Platform struct {
 	// AffinityGroups contains the RHV affinity groups that the installer will create.
 	// +optional
 	AffinityGroups []AffinityGroup `json:"affinityGroups"`
+
+	// LoadBalancer defines how the load balancer used by the cluster is configured.
+	// LoadBalancer is available in TechPreview.
+	// +optional
+	LoadBalancer *configv1.OvirtPlatformLoadBalancer `json:"loadBalancer,omitempty"`
 }
 
 // AffinityGroup defines the affinity group that the installer will create

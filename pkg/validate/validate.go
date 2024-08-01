@@ -277,9 +277,13 @@ func Host(v string) error {
 	if proxyIP != nil {
 		return nil
 	}
-	re := regexp.MustCompile("^[a-z]")
-	if !re.MatchString(v) {
-		return errors.New("domain name must begin with a lower-case letter")
-	}
 	return validateSubdomain(v)
+}
+
+// OnPremClusterName verifies if the cluster name contains a '.' and returns an error if it does.
+func OnPremClusterName(v string) error {
+	if strings.Contains(v, ".") {
+		return errors.New("cluster name must not contain '.'")
+	}
+	return ClusterName(v)
 }

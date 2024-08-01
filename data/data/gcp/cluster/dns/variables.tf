@@ -1,5 +1,10 @@
-variable "public_dns_zone_name" {
+variable "public_zone_name" {
   description = "The name of the public managed DNS zone"
+  type        = string
+}
+
+variable "private_zone_name" {
+  description = "The name of the private managed DNS zone, if exists"
   type        = string
 }
 
@@ -31,4 +36,15 @@ variable "cluster_domain" {
 variable "public_endpoints" {
   type        = bool
   description = "If the cluster should have externally accessible resources."
+}
+
+variable "project_id" {
+  type        = string
+  description = "The target GCP project for the cluster."
+}
+
+variable "gcp_extra_labels" {
+  type        = map(string)
+  description = "GCP labels to be applied to created resources."
+  default     = {}
 }

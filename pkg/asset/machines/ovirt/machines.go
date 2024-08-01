@@ -4,12 +4,12 @@ package ovirt
 import (
 	"fmt"
 
-	ovirtprovider "github.com/openshift/cluster-api-provider-ovirt/pkg/apis/ovirtprovider/v1beta1"
-	machineapi "github.com/openshift/machine-api-operator/pkg/apis/machine/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
+	machineapi "github.com/openshift/api/machine/v1beta1"
+	ovirtprovider "github.com/openshift/cluster-api-provider-ovirt/pkg/apis/ovirtprovider/v1beta1"
 	"github.com/openshift/installer/pkg/types"
 	"github.com/openshift/installer/pkg/types/ovirt"
 )
@@ -73,6 +73,9 @@ func provider(platform *ovirt.Platform, pool *types.MachinePool, userDataSecret 
 		VMType:            string(pool.Platform.Ovirt.VMType),
 		AutoPinningPolicy: string(pool.Platform.Ovirt.AutoPinningPolicy),
 		Hugepages:         int32(pool.Platform.Ovirt.Hugepages),
+		Clone:             pool.Platform.Ovirt.Clone,
+		Sparse:            pool.Platform.Ovirt.Sparse,
+		Format:            pool.Platform.Ovirt.Format,
 	}
 	uniqueNewAG := make(map[string]ovirt.AffinityGroup)
 	for _, ag := range platform.AffinityGroups {

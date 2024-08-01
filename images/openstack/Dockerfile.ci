@@ -1,37 +1,52 @@
 # This Dockerfile is used by CI to test using OpenShift Installer against an OpenStack cloud.
 # It builds an image containing the openshift-install command as well as the openstack cli.
-FROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.16-openshift-4.8 AS builder
+FROM registry.ci.openshift.org/ocp/4.17:installer-terraform-providers as providers
+# We copy from the -artifacts images because they are statically linked
+FROM registry.ci.openshift.org/ocp/4.17:installer-kube-apiserver-artifacts AS kas-artifacts
+FROM registry.ci.openshift.org/ocp/4.17:installer-etcd-artifacts AS etcd-artifacts
+
+FROM registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.22-openshift-4.17 AS builder
+# FIPS support is offered via the baremetal-installer image
+ENV GO_COMPLIANCE_EXCLUDE=".*"
 ARG TAGS=""
+ARG SKIP_ENVTEST="y"
 WORKDIR /go/src/github.com/openshift/installer
 COPY . .
+COPY --from=providers /go/src/github.com/openshift/installer/terraform/bin/ terraform/bin/
+COPY --from=kas-artifacts /usr/share/openshift/ cluster-api/bin/
+COPY --from=etcd-artifacts /usr/share/openshift/ cluster-api/bin/
+RUN mkdir -p cluster-api/bin/$(go env GOOS)_$(go env GOHOSTARCH) && \
+	mv cluster-api/bin/$(go env GOOS)/$(go env GOHOSTARCH)/* -t cluster-api/bin/$(go env GOOS)_$(go env GOHOSTARCH)/
 RUN DEFAULT_ARCH="$(go env GOHOSTARCH)" hack/build.sh
 
-FROM registry.ci.openshift.org/origin/4.8:cli AS cli
+FROM registry.ci.openshift.org/ocp/4.17:cli AS cli
 
-FROM registry.ci.openshift.org/origin/4.8:base
+FROM registry.ci.openshift.org/ocp/4.17:base-rhel9
 COPY --from=cli /usr/bin/oc /bin/oc
 COPY --from=builder /go/src/github.com/openshift/installer/bin/openshift-install /bin/openshift-install
-COPY --from=builder /go/src/github.com/openshift/installer/upi /var/lib/openshift-install/upi
-COPY --from=builder /go/src/github.com/openshift/installer/images/openstack/rdo-train.repo /etc/yum.repos.d/rdo-train.repo
-COPY --from=builder /go/src/github.com/openshift/installer/images/openstack/rdo-train.gpg /etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-SIG-Cloud
+COPY --from=builder /go/src/github.com/openshift/installer/upi/openstack /var/lib/openshift-install/upi
+COPY --from=builder /go/src/github.com/openshift/installer/docs/user/openstack /var/lib/openshift-install/docs
 COPY --from=builder /go/src/github.com/openshift/installer/hack/openstack/test-manifests.sh /go/src/github.com/openshift/installer/scripts/openstack/manifest-tests /var/lib/openshift-install/manifest-tests
 
 # Install Dependendencies for tests
 # https://github.com/openshift/origin/blob/6114cbc507bf18890f009f16ee424a62007bc390/images/tests/Dockerfile.rhel
-RUN yum install --setopt=tsflags=nodocs -y git gzip util-linux glibc-locale-source && \
+RUN yum update -y && \
+    yum install --setopt=tsflags=nodocs -y gettext make git gzip util-linux glibc-locale-source python3-pip unzip jq nmap && \
     yum clean all && rm -rf /var/cache/yum/* && \
     localedef -c -f UTF-8 -i en_US en_US.UTF-8 && \
     git config --system user.name test && \
     git config --system user.email test@example.com && \
     chmod g+w /etc/passwd
 
-# Pin openstacksdk - https://bugzilla.redhat.com/show_bug.cgi?id=1980029
-RUN yum update -y && \
-    yum install --setopt=tsflags=nodocs -y \
-    python3-openstackclient ansible-2.9.14-1.el8ae python3-openstacksdk-0.36.* python3-netaddr unzip jq && \
-    yum clean all && rm -rf /var/cache/yum/*
+# ansible 2.9 is EOL in September 2023, so we need to install ansible-core and get the collections from source
+# until we have a package available.
+RUN python3 -m pip install ansible-core
+RUN ansible-galaxy collection install openstack.cloud ansible.utils community.general && \
+    mkdir -p /usr/share/ansible/collections/ansible_collections && \
+    cp -r /root/.ansible/collections/ansible_collections/* /usr/share/ansible/collections/ansible_collections/
 
-RUN python -m pip install yq
+# ansible-core comes with python3.8 but openstacksdk comes with python3.6 so let's install them from pip.
+RUN python3 -m pip install yq openstackclient openstacksdk netaddr
 
 # The Continuous Integration machinery relies on Route53 for DNS while testing the cluster.
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \

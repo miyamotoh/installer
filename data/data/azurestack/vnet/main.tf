@@ -16,12 +16,6 @@ provider "azurestack" {
   tenant_id       = var.azure_tenant_id
 }
 
-resource "random_string" "storage_suffix" {
-  length  = 5
-  upper   = false
-  special = false
-}
-
 resource "azurestack_resource_group" "main" {
   count = var.azure_resource_group_name == "" ? 1 : 0
 
@@ -43,7 +37,7 @@ data "azurestack_resource_group" "network" {
 }
 
 resource "azurestack_storage_account" "cluster" {
-  name                     = "cluster${random_string.storage_suffix.result}"
+  name                     = "cluster${var.random_storage_account_suffix}"
   resource_group_name      = data.azurestack_resource_group.main.name
   location                 = var.azure_region
   account_tier             = "Standard"
@@ -58,7 +52,7 @@ resource "azurestack_storage_container" "vhd" {
 }
 
 resource "azurestack_storage_blob" "rhcos_image" {
-  name                   = "rhcos${random_string.storage_suffix.result}.vhd"
+  name                   = "rhcos${var.random_storage_account_suffix}.vhd"
   resource_group_name    = data.azurestack_resource_group.main.name
   storage_account_name   = azurestack_storage_account.cluster.name
   storage_container_name = azurestack_storage_container.vhd.name
@@ -78,8 +72,8 @@ resource "azurestack_image" "cluster" {
   }
 }
 
-resource "azurestack_availability_set" "master_availability_set" {
-  name                = "${var.cluster_id}-master"
+resource "azurestack_availability_set" "cluster_availability_set" {
+  name                = "${var.cluster_id}-cluster"
   resource_group_name = data.azurestack_resource_group.main.name
   location            = var.azure_region
   managed             = true

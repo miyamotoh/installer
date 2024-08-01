@@ -1,25 +1,27 @@
 package openstack
 
 import (
+	"context"
 	"os"
 
+	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	"github.com/openshift/installer/pkg/asset/installconfig/openstack/validation"
 	"github.com/openshift/installer/pkg/types"
 	"github.com/openshift/installer/pkg/types/openstack"
 	openstackdefaults "github.com/openshift/installer/pkg/types/openstack/defaults"
-	"github.com/sirupsen/logrus"
+	"github.com/openshift/installer/pkg/types/openstack/validation/networkextensions"
 )
 
 // Validate validates the given installconfig for OpenStack platform
-func Validate(ic *types.InstallConfig) error {
+func Validate(ctx context.Context, ic *types.InstallConfig) error {
 	if skip := os.Getenv("OPENSHIFT_INSTALL_SKIP_PREFLIGHT_VALIDATIONS"); skip == "1" {
 		logrus.Warnf("OVERRIDE: pre-flight validation disabled.")
 		return nil
 	}
 
-	ci, err := validation.GetCloudInfo(ic)
+	ci, err := validation.GetCloudInfo(ctx, ic)
 	if err != nil {
 		return err
 	}
@@ -28,9 +30,13 @@ func Validate(ic *types.InstallConfig) error {
 		return nil
 	}
 
+	if err := ValidateCloud(ci); err != nil {
+		return err
+	}
+
 	allErrs := field.ErrorList{}
 
-	// Validate platform platform
+	// Validate platform
 	allErrs = append(allErrs, validation.ValidatePlatform(ic.Platform.OpenStack, ic.Networking, ci)...)
 
 	// Validate control plane
@@ -38,7 +44,7 @@ func Validate(ic *types.InstallConfig) error {
 	controlPlane.Set(ic.Platform.OpenStack.DefaultMachinePlatform)
 	controlPlane.Set(ic.ControlPlane.Platform.OpenStack)
 	if controlPlane.RootVolume != nil && controlPlane.RootVolume.Zones == nil {
-		controlPlane.RootVolume.Zones = openstackdefaults.DefaultRootVolumeAZ()
+		controlPlane.RootVolume.Zones = []string{openstackdefaults.DefaultRootVolumeAZ()}
 	}
 	allErrs = append(allErrs, validation.ValidateMachinePool(&controlPlane, ci, true, field.NewPath("controlPlane", "platform", "openstack"))...)
 
@@ -48,7 +54,7 @@ func Validate(ic *types.InstallConfig) error {
 		compute.Set(ic.Platform.OpenStack.DefaultMachinePlatform)
 		compute.Set(ic.Compute[idx].Platform.OpenStack)
 		if compute.RootVolume != nil && compute.RootVolume.Zones == nil {
-			compute.RootVolume.Zones = openstackdefaults.DefaultRootVolumeAZ()
+			compute.RootVolume.Zones = []string{openstackdefaults.DefaultRootVolumeAZ()}
 		}
 		fldPath := field.NewPath("compute").Index(idx)
 		allErrs = append(allErrs, validation.ValidateMachinePool(&compute, ci, false, fldPath.Child("platform", "openstack"))...)
@@ -69,4 +75,9 @@ func defaultOpenStackMachinePoolPlatform() openstack.MachinePool {
 	return openstack.MachinePool{
 		Zones: []string{""},
 	}
+}
+
+// ValidateCloud checks OpenStack requirements, regardless of the InstallConfig.
+func ValidateCloud(ci *validation.CloudInfo) error {
+	return networkextensions.Validate(ci.NetworkExtensions)
 }

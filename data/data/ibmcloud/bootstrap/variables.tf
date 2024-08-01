@@ -2,6 +2,11 @@
 # Bootstrap module variables
 #######################################
 
+variable "control_plane_dedicated_host_id_list" {
+  type    = list(string)
+  default = []
+}
+
 variable "control_plane_security_group_id_list" {
   type = list(string)
 }
@@ -10,11 +15,15 @@ variable "control_plane_subnet_id_list" {
   type = list(string)
 }
 
+variable "compute_subnet_id_list" {
+  type = list(string)
+}
+
 variable "control_plane_subnet_zone_list" {
   type = list(string)
 }
 
-variable "cos_resource_instance_id" {
+variable "cos_resource_instance_crn" {
   type = string
 }
 

@@ -1,6 +1,8 @@
 package installconfig
 
 import (
+	"context"
+
 	survey "github.com/AlecAivazis/survey/v2"
 	"github.com/pkg/errors"
 
@@ -24,7 +26,7 @@ func (a *clusterName) Dependencies() []asset.Asset {
 }
 
 // Generate queries for the cluster name from the user.
-func (a *clusterName) Generate(parents asset.Parents) error {
+func (a *clusterName) Generate(_ context.Context, parents asset.Parents) error {
 	bd := &baseDomain{}
 	platform := &platform{}
 	parents.Get(bd, platform)
@@ -43,9 +45,13 @@ func (a *clusterName) Generate(parents asset.Parents) error {
 	}
 
 	if platform.Ovirt != nil {
-		// FIX-ME: As soon bz#1915122 get resolved remove the limitation of 14 chars for the clustername
 		validator = survey.ComposeValidators(validator, func(ans interface{}) error {
-			return validate.ClusterNameMaxLength(ans.(string), 14)
+			return validate.ClusterName(ans.(string))
+		})
+	}
+	if platform.VSphere != nil || platform.BareMetal != nil || platform.Nutanix != nil {
+		validator = survey.ComposeValidators(validator, func(ans interface{}) error {
+			return validate.OnPremClusterName(ans.(string))
 		})
 	}
 	validator = survey.ComposeValidators(validator, func(ans interface{}) error {

@@ -6,11 +6,20 @@ import (
 	"github.com/openshift/installer/pkg/types/baremetal"
 	"github.com/openshift/installer/pkg/types/gcp"
 	"github.com/openshift/installer/pkg/types/ibmcloud"
-	"github.com/openshift/installer/pkg/types/kubevirt"
-	"github.com/openshift/installer/pkg/types/libvirt"
+	"github.com/openshift/installer/pkg/types/nutanix"
 	"github.com/openshift/installer/pkg/types/openstack"
 	"github.com/openshift/installer/pkg/types/ovirt"
+	"github.com/openshift/installer/pkg/types/powervs"
 	"github.com/openshift/installer/pkg/types/vsphere"
+)
+
+const (
+	// MachinePoolComputeRoleName name associated with the compute machinepool.
+	MachinePoolComputeRoleName = "worker"
+	// MachinePoolEdgeRoleName name associated with the compute edge machinepool.
+	MachinePoolEdgeRoleName = "edge"
+	// MachinePoolControlPlaneRoleName name associated with the control plane machinepool.
+	MachinePoolControlPlaneRoleName = "master"
 )
 
 // HyperthreadingMode is the mode of hyperthreading for a machine.
@@ -86,9 +95,6 @@ type MachinePoolPlatform struct {
 	// IBMCloud is the configuration used when installing on IBM Cloud.
 	IBMCloud *ibmcloud.MachinePool `json:"ibmcloud,omitempty"`
 
-	// Libvirt is the configuration used when installing on libvirt.
-	Libvirt *libvirt.MachinePool `json:"libvirt,omitempty"`
-
 	// OpenStack is the configuration used when installing on OpenStack.
 	OpenStack *openstack.MachinePool `json:"openstack,omitempty"`
 
@@ -98,8 +104,11 @@ type MachinePoolPlatform struct {
 	// Ovirt is the configuration used when installing on oVirt.
 	Ovirt *ovirt.MachinePool `json:"ovirt,omitempty"`
 
-	// Kubevirt is the configuration used when installing on Kubevirt.
-	Kubevirt *kubevirt.MachinePool `json:"kubevirt,omitempty"`
+	// PowerVS is the configuration used when installing on IBM Power VS.
+	PowerVS *powervs.MachinePool `json:"powervs,omitempty"`
+
+	// Nutanix is the configuration used when installing on Nutanix.
+	Nutanix *nutanix.MachinePool `json:"nutanix,omitempty"`
 }
 
 // Name returns a string representation of the platform (e.g. "aws" if
@@ -119,16 +128,16 @@ func (p *MachinePoolPlatform) Name() string {
 		return gcp.Name
 	case p.IBMCloud != nil:
 		return ibmcloud.Name
-	case p.Libvirt != nil:
-		return libvirt.Name
 	case p.OpenStack != nil:
 		return openstack.Name
 	case p.VSphere != nil:
 		return vsphere.Name
 	case p.Ovirt != nil:
 		return ovirt.Name
-	case p.Kubevirt != nil:
-		return kubevirt.Name
+	case p.PowerVS != nil:
+		return powervs.Name
+	case p.Nutanix != nil:
+		return nutanix.Name
 	default:
 		return ""
 	}

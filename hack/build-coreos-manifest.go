@@ -8,22 +8,28 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 
-	"github.com/ghodss/yaml"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/yaml"
 )
 
 const (
-	streamJSON = "data/data/rhcos-stream.json"
-	dest       = "bin/manifests/coreos-bootimages.yaml"
+	streamRHCOSJSON = "data/data/coreos/rhcos.json"
+	streamFCOSJSON  = "data/data/coreos/fcos.json"
+	fcosTAG         = "okd"
+	dest            = "bin/manifests/coreos-bootimages.yaml"
 )
 
 func run() error {
-	bootimages, err := ioutil.ReadFile(streamJSON)
+	streamJSON := streamRHCOSJSON
+	if tags, _ := os.LookupEnv("TAGS"); strings.Contains(tags, fcosTAG) {
+		streamJSON = streamFCOSJSON
+	}
+	bootimages, err := os.ReadFile(streamJSON)
 	if err != nil {
 		return err
 	}
@@ -57,7 +63,7 @@ func run() error {
 		return err
 	}
 
-	err = ioutil.WriteFile(dest, b, 0644)
+	err = os.WriteFile(dest, b, 0o644)
 	if err != nil {
 		return err
 	}

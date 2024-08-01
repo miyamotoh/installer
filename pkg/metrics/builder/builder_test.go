@@ -18,7 +18,7 @@ func getDescStruct(opts MetricOpts, labelKeyValues map[string]string) string {
 	}
 	sort.Strings(lpStrings)
 	return fmt.Sprintf("Desc{fqName: %q, help: %q, constLabels: {%s}, variableLabels: %v}",
-		opts.Name, opts.Desc, strings.Join(lpStrings, ","), []string{})
+		opts.Name, opts.Desc, strings.Join(lpStrings, ","), "{}")
 }
 
 func getCollectorDescription(collector prometheus.Collector) string {
@@ -32,7 +32,7 @@ func getCollectorDescription(collector prometheus.Collector) string {
 	}
 }
 
-//TestNewMetricBuilder tests the Metric Builder initializer.
+// TestNewMetricBuilder tests the Metric Builder initializer.
 func TestMetricBuilder(t *testing.T) {
 	cases := []struct {
 		name                  string
@@ -109,7 +109,7 @@ func TestMetricBuilder(t *testing.T) {
 	}
 }
 
-//TestMetricBuilderCollector tests the PromCollector function.
+// TestMetricBuilderCollector tests the PromCollector function.
 func TestMetricBuilderCollector(t *testing.T) {
 	cases := []struct {
 		name                  string
@@ -192,7 +192,7 @@ func TestMetricBuilderCollector(t *testing.T) {
 	}
 }
 
-//TestNewMetricBuilder tests the Metric Builder initializer.
+// TestNewMetricBuilder tests the Metric Builder initializer.
 func TestNewMetricBuilder(t *testing.T) {
 	opts := MetricOpts{
 		Labels:     []string{"test1", "test2", "test3"},

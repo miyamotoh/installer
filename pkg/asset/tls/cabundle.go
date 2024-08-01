@@ -2,11 +2,13 @@ package tls
 
 import (
 	"bytes"
+	"context"
 	"encoding/pem"
 
-	"github.com/openshift/installer/pkg/asset"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+
+	"github.com/openshift/installer/pkg/asset"
 )
 
 // CertBundle contains a multiple certificates in a bundle.
@@ -21,7 +23,7 @@ func (b *CertBundle) Cert() []byte {
 }
 
 // Generate generates the cert bundle from certs.
-func (b *CertBundle) Generate(filename string, certs ...CertInterface) error {
+func (b *CertBundle) Generate(_ context.Context, filename string, certs ...CertInterface) error {
 	if len(certs) < 1 {
 		return errors.New("atleast one certificate required for a bundle")
 	}

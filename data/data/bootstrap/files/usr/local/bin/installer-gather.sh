@@ -3,6 +3,9 @@
 # shellcheck disable=SC1091
 . /usr/local/bin/bootstrap-cluster-gather.sh
 
+# Get target architecture
+arch=$(uname -m)
+
 if test "x${1}" = 'x--id'
 then
 	GATHER_ID="${2}"
@@ -31,16 +34,20 @@ done
 
 echo "Gathering bootstrap journals ..."
 mkdir -p "${ARTIFACTS}/bootstrap/journals"
-for service in release-image release-image-download crio-configure bootkube kubelet crio approve-csr ironic master-bmh-update
+for service in approve-csr bootkube crio crio-configure image-customization ironic ironic-dnsmasq ironic-httpd ironic-ramdisk-logs \
+    kubelet master-bmh-update metal3-baremetal-operator release-image release-image-download sssd
 do
     journalctl --boot --no-pager --output=short --unit="${service}" > "${ARTIFACTS}/bootstrap/journals/${service}.log"
 done
+
+journalctl -o with-unit --no-pager | gzip > "${ARTIFACTS}/bootstrap/journals/journal.log.gz"
 
 echo "Gathering bootstrap networking ..."
 mkdir -p "${ARTIFACTS}/bootstrap/network"
 ip addr >& "${ARTIFACTS}/bootstrap/network/ip-addr.txt"
 ip route >& "${ARTIFACTS}/bootstrap/network/ip-route.txt"
 hostname >& "${ARTIFACTS}/bootstrap/network/hostname.txt"
+netstat -anp >& "${ARTIFACTS}/bootstrap/network/netstat.txt"
 cp -r /etc/resolv.conf "${ARTIFACTS}/bootstrap/network/"
 
 echo "Gathering bootstrap containers ..."
@@ -59,6 +66,11 @@ do
     sudo podman inspect "${container_id}" >& "${ARTIFACTS}/bootstrap/pods/${container_name}-${container_id}.inspect"
 done
 
+echo "Gathering bootstrap rpm-ostree info ..."
+mkdir -p "${ARTIFACTS}/bootstrap/rpm-ostree"
+sudo rpm-ostree status >& "${ARTIFACTS}/bootstrap/rpm-ostree/status"
+sudo rpm-ostree ex history >& "${ARTIFACTS}/bootstrap/rpm-ostree/history"
+
 echo "Gathering rendered assets..."
 mkdir -p "${ARTIFACTS}/rendered-assets"
 sudo cp -r /var/opt/openshift/ "${ARTIFACTS}/rendered-assets"
@@ -70,6 +82,16 @@ find "${ARTIFACTS}/rendered-assets" -name "*secret*" -print0 | xargs -0 rm -rf
 find "${ARTIFACTS}/rendered-assets" -name "*kubeconfig*" -print0 | xargs -0 rm
 find "${ARTIFACTS}/rendered-assets" -name "*.key" -print0 | xargs -0 rm
 find "${ARTIFACTS}/rendered-assets" -name ".kube" -print0 | xargs -0 rm -rf
+
+# Collect system information specific to IBM Linux Z (s390x) systems. The dbginfo
+# script is available by default as part of the s390-utils rpm package
+if [ "$arch" == "s390x" ]
+then
+    echo "Gathering dbginfo for the 390x system"
+    mkdir -p "${ARTIFACTS}/node-dbginfo"
+    sudo /usr/sbin/dbginfo.sh -d "${ARTIFACTS}/node-dbginfo"
+    sudo chown -R "${USER}":"${USER}" "${ARTIFACTS}/node-dbginfo"
+fi
 
 # Collect cluster data
 GATHER_KUBECONFIG="/opt/openshift/auth/kubeconfig"

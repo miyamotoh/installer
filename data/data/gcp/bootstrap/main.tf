@@ -1,10 +1,4 @@
 locals {
-  labels = merge(
-    {
-      "kubernetes-io-cluster-${var.cluster_id}" = "owned"
-    },
-    var.gcp_extra_labels,
-  )
   description = "Created By OpenShift Installer"
 
   public_endpoints = var.gcp_publish_strategy == "External" ? true : false
@@ -18,9 +12,22 @@ provider "google" {
 }
 
 resource "google_storage_bucket" "ignition" {
-  name               = "${var.cluster_id}-bootstrap-ignition"
-  location           = var.gcp_region
-  bucket_policy_only = true
+  name                        = "${var.cluster_id}-bootstrap-ignition"
+  location                    = var.gcp_region
+  uniform_bucket_level_access = true
+  labels                      = var.gcp_extra_labels
+}
+
+resource "google_tags_location_tag_binding" "user_tag_binding_bucket" {
+  for_each = var.gcp_extra_tags
+
+  parent = format("//storage.googleapis.com/projects/_/buckets/%s",
+    google_storage_bucket.ignition.name,
+  )
+  tag_value = each.value
+  location  = var.gcp_region
+
+  depends_on = [google_storage_bucket.ignition]
 }
 
 resource "google_storage_bucket_object" "ignition" {
@@ -29,15 +36,9 @@ resource "google_storage_bucket_object" "ignition" {
   content = var.ignition_bootstrap
 }
 
-data "google_storage_object_signed_url" "ignition_url" {
-  bucket   = google_storage_bucket.ignition.name
-  path     = "bootstrap.ign"
-  duration = "1h"
-}
-
 data "ignition_config" "redirect" {
   replace {
-    source = data.google_storage_object_signed_url.ignition_url.signed_url
+    source = var.gcp_signed_url
   }
 }
 
@@ -50,9 +51,11 @@ resource "google_compute_address" "bootstrap" {
 }
 
 resource "google_compute_firewall" "bootstrap_ingress_ssh" {
+  count       = var.gcp_create_firewall_rules ? 1 : 0
   name        = "${var.cluster_id}-bootstrap-in-ssh"
   network     = var.network
   description = local.description
+  project     = var.gcp_network_project_id
 
   allow {
     protocol = "tcp"
@@ -71,9 +74,11 @@ resource "google_compute_instance" "bootstrap" {
 
   boot_disk {
     initialize_params {
-      type  = var.gcp_master_root_volume_type
-      size  = var.gcp_master_root_volume_size
-      image = var.compute_image
+      type                  = var.gcp_master_root_volume_type
+      size                  = var.gcp_master_root_volume_size
+      image                 = var.compute_image
+      labels                = var.gcp_extra_labels
+      resource_manager_tags = var.gcp_extra_tags
     }
     kms_key_self_link = var.gcp_root_volume_kms_key_link
   }
@@ -91,13 +96,38 @@ resource "google_compute_instance" "bootstrap" {
     network_ip = local.public_endpoints ? null : google_compute_address.bootstrap.address
   }
 
+  dynamic "shielded_instance_config" {
+    for_each = var.gcp_master_secure_boot != "" ? [1] : []
+    content {
+      enable_secure_boot = var.gcp_master_secure_boot == "Enabled"
+    }
+  }
+
+  dynamic "confidential_instance_config" {
+    for_each = var.gcp_master_confidential_compute != "" ? [1] : []
+    content {
+      enable_confidential_compute = var.gcp_master_confidential_compute == "Enabled"
+    }
+  }
+
+  dynamic "scheduling" {
+    for_each = var.gcp_master_on_host_maintenance != "" ? [1] : []
+    content {
+      on_host_maintenance = var.gcp_master_on_host_maintenance
+    }
+  }
+
   metadata = {
-    user-data = data.ignition_config.redirect.rendered
+    user-data = var.gcp_ignition_shim
   }
 
   tags = ["${var.cluster_id}-master", "${var.cluster_id}-bootstrap"]
 
-  labels = local.labels
+  labels = var.gcp_extra_labels
+
+  params {
+    resource_manager_tags = var.gcp_extra_tags
+  }
 
   lifecycle {
     # In GCP TF apply is run a second time to remove bootstrap node from LB.

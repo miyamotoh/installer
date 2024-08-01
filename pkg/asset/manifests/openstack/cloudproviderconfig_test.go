@@ -1,11 +1,14 @@
 package openstack
 
 import (
+	"context"
 	"testing"
 
-	"github.com/gophercloud/utils/openstack/clientconfig"
-	"github.com/openshift/installer/pkg/types"
+	"github.com/gophercloud/utils/v2/openstack/clientconfig"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/openshift/installer/pkg/types"
+	"github.com/openshift/installer/pkg/types/openstack"
 )
 
 func TestCloudProviderConfigSecret(t *testing.T) {
@@ -101,27 +104,14 @@ func TestCloudProviderConfig(t *testing.T) {
 			name: "default install config",
 			installConfig: &types.InstallConfig{
 				Networking: &types.Networking{},
-			},
-			expectedConfig: `[Global]
-secret-name = openstack-credentials
-secret-namespace = kube-system
-region = my_region
-[LoadBalancer]
-use-octavia = True
-`,
-		}, {
-			name: "installation with kuryr",
-			installConfig: &types.InstallConfig{
-				Networking: &types.Networking{
-					NetworkType: "Kuryr",
+				Platform: types.Platform{
+					OpenStack: &openstack.Platform{},
 				},
 			},
 			expectedConfig: `[Global]
 secret-name = openstack-credentials
 secret-namespace = kube-system
 region = my_region
-[LoadBalancer]
-use-octavia = False
 `,
 		},
 	}
@@ -140,8 +130,9 @@ use-octavia = False
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			actualConfig, _, _ := generateCloudProviderConfig(&cloud, *tc.installConfig)
-			assert.Equal(t, tc.expectedConfig, string(actualConfig), "unexpected cloud provider config")
+			actualConfig, _, err := generateCloudProviderConfig(context.Background(), nil, &cloud, *tc.installConfig)
+			assert.NoError(t, err, "unexpected error when generating cloud provider config")
+			assert.Equal(t, tc.expectedConfig, actualConfig, "unexpected cloud provider config")
 		})
 	}
 }

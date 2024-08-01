@@ -2,9 +2,30 @@
 
 We have been tracking a few issues and FAQs from our users, and are documenting them here along with the known workarounds and solutions. For issues that still have open bugs, we have attached the links to where the engineering team is tracking their progress. As changes occur, we will update both this document and the issue trackers with the latest information.
 
+## HTTPS CommonName deprecation
+
+With OpenShift v4.10, HTTPS certificates must include the names for the server in the `Subject Alternative Names` field. Legacy certificates will be rejected with the following error message:
+
+> x509: certificate relies on legacy Common Name field, use SANs instead
+
+In order to validate your OpenStack infrastructure prior to installation or upgrade to v4.10, please refer to the [dedicated instructions](invalid-https-certificates.md).
+
 ## Resources With Duplicate Names
 
 Since the installer requires the *Name* of your external network and Red Hat Core OS image, if you have other networks or images with the same name, it will choose one randomly from the set. This is not a reliable way to run the installer. We highly recommend that you resolve this with your cluster administrator by creating unique names for your resources in openstack.
+
+## Soft-anti-affinity
+
+A long-standing OpenStack Compute issue prevents the soft anti-affinity
+policy to correctly apply when instances are created in parallel. To maximize
+the chances that the default soft-anti-affinity setting applies, the Installer
+generates the Control plane instances sequentially. However, there is no
+guarantee that other machines, and in particular Compute nodes, are created
+sequentially. This applies both to install-time machine building, and day 2
+operations (e.g. MachineSet scale-out).
+
+**When it is a requirement that machines land on distinct Compute hosts,
+explicitly set `serverGroupPolicy` to `anti-affinity`.**
 
 ## Extended installation times
 
@@ -125,35 +146,17 @@ The teardown playbooks provided for UPI installation will not delete:
 
 These objects have to be manually removed after running the teardown playbooks.
 
-## Control plane scale out anti-affinity
+## Limitations of creating external load balancers using pre-defined FIPs
 
-A long-standing OpenStack Compute issue prevents the "soft"-anti-affinity
-policy to be correctly applied when instances are created in parallel. The
-Installer places the initial control plane nodes in a Server group with
-"soft-anti-affinity" policy and creates the first three sequentially to work
-around the problem. Additional control plane nodes beyond the first three are
-created, according to the "replicas" property, in a later phase. These nodes
-are not guaranteed to be created sequentially.
+On most clouds, the default policy prevents non-admin users from creating                                     
+a floating IP that has a specific address. Such policies cause the cloud provider
+to fail handling floating IP assignment to load balancers if a floating IP address
+is present in the service specification.
 
-When anti-affinity is a requirement, it is advised to rely on the more stable
-"anti-affinity" for any node beyond the third. To do so, install with three
-control plane replicas only. Add more nodes as a day-2 operation by assigning
-them a new Server group with "anti-affinity" policy. Use the `ServerGroupID`
-property of the Machine ProviderSpec.
+You can pre-create a floating IP and pass the address of it in the service
+specification if using the external cloud provider. The in-tree cloud
+provider does not support this.
+Alternatively, you can [relax the Neutron policy][policy-change-steps]
+to allow non-admin users to create FIPs with a specific IP address.
 
-## Requirement to create Control Plane Machines manifests (Kuryr SDN)
-
-Installations with Kuryr SDN can timeout due to changes in the way Kuryr detects
-the OpenStack Subnet used by the cluster's nodes. Kuryr relied on the Network of
-the cluster's nodes Subnet having a specific tag, but the tag was removed for IPI
-Installations causing the need to discover it from the OpenShift Machine objects,
-which the creation is removed on one of the UPI steps. Until the fix for
-[the issue][bugzilla-upi] is available, as a workaround, only the compute machine
-manifests should be removed in the [Remove machines and machinesets][manifests-removal]
-section of the UPI guide. The command to run is:
-
-```console
-$ rm -f openshift/99_openshift-cluster-api_worker-machineset-*.yaml
-```
-[bugzilla-upi]: https://bugzilla.redhat.com/show_bug.cgi?id=1927244
-[manifests-removal]:../openstack/install_upi.md#remove-machines-and-machinesets
+[policy-change-steps]: https://access.redhat.com/solutions/6069071

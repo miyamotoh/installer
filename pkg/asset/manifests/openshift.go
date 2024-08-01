@@ -3,21 +3,22 @@ package manifests
 import (
 	"context"
 	"encoding/base64"
-	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
-	"github.com/ghodss/yaml"
-	"github.com/gophercloud/utils/openstack/clientconfig"
+	"github.com/gophercloud/utils/v2/openstack/clientconfig"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"sigs.k8s.io/yaml"
 
 	"github.com/openshift/installer/pkg/asset"
 	"github.com/openshift/installer/pkg/asset/installconfig"
 	installconfigaws "github.com/openshift/installer/pkg/asset/installconfig/aws"
 	"github.com/openshift/installer/pkg/asset/installconfig/gcp"
 	"github.com/openshift/installer/pkg/asset/installconfig/ibmcloud"
-	kubeconfig "github.com/openshift/installer/pkg/asset/installconfig/kubevirt"
 	"github.com/openshift/installer/pkg/asset/installconfig/ovirt"
 	"github.com/openshift/installer/pkg/asset/machines"
 	osmachine "github.com/openshift/installer/pkg/asset/machines/openstack"
@@ -32,7 +33,6 @@ import (
 	baremetaltypes "github.com/openshift/installer/pkg/types/baremetal"
 	gcptypes "github.com/openshift/installer/pkg/types/gcp"
 	ibmcloudtypes "github.com/openshift/installer/pkg/types/ibmcloud"
-	kubevirttypes "github.com/openshift/installer/pkg/types/kubevirt"
 	openstacktypes "github.com/openshift/installer/pkg/types/openstack"
 	ovirttypes "github.com/openshift/installer/pkg/types/ovirt"
 	vspheretypes "github.com/openshift/installer/pkg/types/vsphere"
@@ -64,6 +64,7 @@ func (o *Openshift) Dependencies() []asset.Asset {
 		&installconfig.ClusterID{},
 		&password.KubeadminPassword{},
 		&openshiftinstall.Config{},
+		&FeatureGate{},
 
 		&openshift.CloudCredsSecret{},
 		&openshift.KubeadminPasswordSecret{},
@@ -75,17 +76,20 @@ func (o *Openshift) Dependencies() []asset.Asset {
 }
 
 // Generate generates the respective operator config.yml files
-func (o *Openshift) Generate(dependencies asset.Parents) error {
+//
+//nolint:gocyclo
+func (o *Openshift) Generate(ctx context.Context, dependencies asset.Parents) error {
 	installConfig := &installconfig.InstallConfig{}
 	clusterID := &installconfig.ClusterID{}
 	kubeadminPassword := &password.KubeadminPassword{}
 	openshiftInstall := &openshiftinstall.Config{}
-	dependencies.Get(installConfig, kubeadminPassword, clusterID, openshiftInstall)
+	featureGate := &FeatureGate{}
+	dependencies.Get(installConfig, kubeadminPassword, clusterID, openshiftInstall, featureGate)
 	var cloudCreds cloudCredsSecretData
 	platform := installConfig.Config.Platform.Name()
 	switch platform {
 	case awstypes.Name:
-		ssn, err := installConfig.AWS.Session(context.TODO())
+		ssn, err := installConfig.AWS.Session(ctx)
 		if err != nil {
 			return err
 		}
@@ -107,7 +111,6 @@ func (o *Openshift) Generate(dependencies asset.Parents) error {
 				Base64encodeSecretAccessKey: base64.StdEncoding.EncodeToString([]byte(creds.SecretAccessKey)),
 			},
 		}
-
 	case azuretypes.Name:
 		resourceGroupName := installConfig.Config.Azure.ClusterResourceGroupName(clusterID.InfraID)
 		session, err := installConfig.Azure.Session()
@@ -127,7 +130,7 @@ func (o *Openshift) Generate(dependencies asset.Parents) error {
 			},
 		}
 	case gcptypes.Name:
-		session, err := gcp.GetSession(context.TODO())
+		session, err := gcp.GetSession(ctx)
 		if err != nil {
 			return err
 		}
@@ -138,13 +141,13 @@ func (o *Openshift) Generate(dependencies asset.Parents) error {
 			},
 		}
 	case ibmcloudtypes.Name:
-		client, err := ibmcloud.NewClient()
+		client, err := ibmcloud.NewClient(installConfig.Config.Platform.IBMCloud.ServiceEndpoints)
 		if err != nil {
 			return err
 		}
 		cloudCreds = cloudCredsSecretData{
 			IBMCloud: &IBMCloudCredsSecretData{
-				Base64encodeAPIKey: base64.StdEncoding.EncodeToString([]byte(client.Authenticator.ApiKey)),
+				Base64encodeAPIKey: base64.StdEncoding.EncodeToString([]byte(client.GetAPIKey())),
 			},
 		}
 	case openstacktypes.Name:
@@ -158,6 +161,16 @@ func (o *Openshift) Generate(dependencies asset.Parents) error {
 		// We need to replace the local cacert path with one that is used in OpenShift
 		if cloud.CACertFile != "" {
 			cloud.CACertFile = "/etc/kubernetes/static-pod-resources/configmaps/cloud-config/ca-bundle.pem"
+		}
+
+		// Application credentials are easily rotated in the event of a leak and should be preferred. Encourage their use.
+		authTypes := sets.New(clientconfig.AuthPassword, clientconfig.AuthV2Password, clientconfig.AuthV3Password)
+		if cloud.AuthInfo != nil && authTypes.Has(cloud.AuthType) {
+			logrus.Warnf(
+				"clouds.yaml file is using %q type auth. Consider using the %q auth type instead to rotate credentials more easily.",
+				cloud.AuthType,
+				clientconfig.AuthV3ApplicationCredential,
+			)
 		}
 
 		clouds := make(map[string]map[string]*clientconfig.Cloud)
@@ -184,12 +197,19 @@ func (o *Openshift) Generate(dependencies asset.Parents) error {
 			},
 		}
 	case vspheretypes.Name:
+		vsphereCredList := make([]*VSphereCredsSecretData, 0)
+
+		for _, vCenter := range installConfig.Config.VSphere.VCenters {
+			vsphereCred := VSphereCredsSecretData{
+				VCenter:              vCenter.Server,
+				Base64encodeUsername: base64.StdEncoding.EncodeToString([]byte(vCenter.Username)),
+				Base64encodePassword: base64.StdEncoding.EncodeToString([]byte(vCenter.Password)),
+			}
+			vsphereCredList = append(vsphereCredList, &vsphereCred)
+		}
+
 		cloudCreds = cloudCredsSecretData{
-			VSphere: &VSphereCredsSecretData{
-				VCenter:              installConfig.Config.VSphere.VCenter,
-				Base64encodeUsername: base64.StdEncoding.EncodeToString([]byte(installConfig.Config.VSphere.Username)),
-				Base64encodePassword: base64.StdEncoding.EncodeToString([]byte(installConfig.Config.VSphere.Password)),
-			},
+			VSphere: &vsphereCredList,
 		}
 	case ovirttypes.Name:
 		conf, err := ovirt.NewConfig()
@@ -198,7 +218,7 @@ func (o *Openshift) Generate(dependencies asset.Parents) error {
 		}
 
 		if len(conf.CABundle) == 0 && len(conf.CAFile) > 0 {
-			content, err := ioutil.ReadFile(conf.CAFile)
+			content, err := os.ReadFile(conf.CAFile)
 			if err != nil {
 				return errors.Wrapf(err, "failed to read the cert file: %s", conf.CAFile)
 			}
@@ -212,16 +232,6 @@ func (o *Openshift) Generate(dependencies asset.Parents) error {
 				Base64encodePassword: base64.StdEncoding.EncodeToString([]byte(conf.Password)),
 				Base64encodeInsecure: base64.StdEncoding.EncodeToString([]byte(strconv.FormatBool(conf.Insecure))),
 				Base64encodeCABundle: base64.StdEncoding.EncodeToString([]byte(conf.CABundle)),
-			},
-		}
-	case kubevirttypes.Name:
-		kubeconfigContent, err := kubeconfig.LoadKubeConfigContent()
-		if err != nil {
-			return err
-		}
-		cloudCreds = cloudCredsSecretData{
-			Kubevirt: &KubevirtCredsSecretData{
-				Base64encodedKubeconfig: base64.StdEncoding.EncodeToString(kubeconfigContent),
 			},
 		}
 	}
@@ -249,7 +259,7 @@ func (o *Openshift) Generate(dependencies asset.Parents) error {
 	}
 
 	switch platform {
-	case awstypes.Name, openstacktypes.Name, vspheretypes.Name, azuretypes.Name, gcptypes.Name, ibmcloudtypes.Name, ovirttypes.Name, kubevirttypes.Name:
+	case awstypes.Name, openstacktypes.Name, vspheretypes.Name, azuretypes.Name, gcptypes.Name, ibmcloudtypes.Name, ovirttypes.Name:
 		if installConfig.Config.CredentialsMode != types.ManualCredentialsMode {
 			assetData["99_cloud-creds-secret.yaml"] = applyTemplateData(cloudCredsSecret.Files()[0].Data, templateData)
 		}
@@ -257,12 +267,12 @@ func (o *Openshift) Generate(dependencies asset.Parents) error {
 	case baremetaltypes.Name:
 		bmTemplateData := baremetalTemplateData{
 			Baremetal:                 installConfig.Config.Platform.BareMetal,
-			ProvisioningOSDownloadURL: string(*rhcosImage),
+			ProvisioningOSDownloadURL: rhcosImage.ControlPlane,
 		}
 		assetData["99_baremetal-provisioning-config.yaml"] = applyTemplateData(baremetalConfig.Files()[0].Data, bmTemplateData)
 	}
 
-	if platform == azuretypes.Name && installConfig.Config.Azure.IsARO() {
+	if platform == azuretypes.Name && installConfig.Config.Azure.IsARO() && installConfig.Config.CredentialsMode != types.ManualCredentialsMode {
 		// config is used to created compatible secret to trigger azure cloud
 		// controller config merge behaviour
 		// https://github.com/openshift/origin/blob/90c050f5afb4c52ace82b15e126efe98fa798d88/vendor/k8s.io/legacy-cloud-providers/azure/azure_config.go#L83
@@ -305,6 +315,7 @@ func (o *Openshift) Generate(dependencies asset.Parents) error {
 	}
 
 	o.FileList = append(o.FileList, openshiftInstall.Files()...)
+	o.FileList = append(o.FileList, featureGate.Files()...)
 
 	asset.SortFiles(o.FileList)
 

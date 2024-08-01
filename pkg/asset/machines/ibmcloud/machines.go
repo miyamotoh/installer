@@ -3,19 +3,19 @@ package ibmcloud
 import (
 	"fmt"
 
-	ibmcloudprovider "github.com/openshift/cluster-api-provider-ibmcloud/pkg/apis/ibmcloudprovider/v1beta1"
-	machineapi "github.com/openshift/machine-api-operator/pkg/apis/machine/v1beta1"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
+	machineapi "github.com/openshift/api/machine/v1beta1"
 	"github.com/openshift/installer/pkg/types"
 	"github.com/openshift/installer/pkg/types/ibmcloud"
+	ibmcloudprovider "github.com/openshift/machine-api-provider-ibmcloud/pkg/apis/ibmcloudprovider/v1"
 )
 
 // Machines returns a list of machines for a machinepool.
-func Machines(clusterID string, config *types.InstallConfig, pool *types.MachinePool, role, userDataSecret string) ([]machineapi.Machine, error) {
+func Machines(clusterID string, config *types.InstallConfig, subnets map[string]string, pool *types.MachinePool, role, userDataSecret string) ([]machineapi.Machine, error) {
 	if configPlatform := config.Platform.Name(); configPlatform != ibmcloud.Name {
 		return nil, fmt.Errorf("non-IBMCloud configuration: %q", configPlatform)
 	}
@@ -34,7 +34,7 @@ func Machines(clusterID string, config *types.InstallConfig, pool *types.Machine
 	var machines []machineapi.Machine
 	for idx := int64(0); idx < total; idx++ {
 		azIndex := int(idx) % len(azs)
-		provider, err := provider(clusterID, platform, mpool, azIndex, role, userDataSecret)
+		provider, err := provider(clusterID, platform, subnets, mpool, azIndex, role, userDataSecret)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to create provider")
 		}
@@ -67,6 +67,7 @@ func Machines(clusterID string, config *types.InstallConfig, pool *types.Machine
 
 func provider(clusterID string,
 	platform *ibmcloud.Platform,
+	subnets map[string]string,
 	mpool *ibmcloud.MachinePool,
 	azIdx int,
 	role string,
@@ -75,8 +76,8 @@ func provider(clusterID string,
 	az := mpool.Zones[azIdx]
 
 	var vpc string
-	if platform.VPC != "" {
-		vpc = platform.VPC
+	if platform.VPCName != "" {
+		vpc = platform.VPCName
 	} else {
 		vpc = fmt.Sprintf("%s-vpc", clusterID)
 	}
@@ -88,7 +89,19 @@ func provider(clusterID string,
 		resourceGroup = clusterID
 	}
 
-	subnet, err := getSubnetName(clusterID, role, az)
+	// Set the ProviderSpec.BootVolume, with encryption key if provided
+	bootVolume := ibmcloudprovider.IBMCloudMachineBootVolume{}
+	if mpool.BootVolume != nil && mpool.BootVolume.EncryptionKey != "" {
+		bootVolume.EncryptionKey = mpool.BootVolume.EncryptionKey
+	}
+
+	// Set the ProviderSpec.NetworkResourceGroup if NetworkResourceGroupName was provided
+	var networkResourceGroup string
+	if platform.NetworkResourceGroupName != "" {
+		networkResourceGroup = platform.NetworkResourceGroupName
+	}
+
+	subnet, err := getSubnet(subnets, clusterID, role, az)
 	if err != nil {
 		return nil, err
 	}
@@ -98,26 +111,62 @@ func provider(clusterID string,
 		return nil, err
 	}
 
+	var dedicatedHost string
+	if len(mpool.DedicatedHosts) == len(mpool.Zones) {
+		if mpool.DedicatedHosts[azIdx].Name != "" {
+			dedicatedHost = mpool.DedicatedHosts[azIdx].Name
+		} else {
+			dedicatedHost, err = getDedicatedHostNameForZone(clusterID, role, az)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	return &ibmcloudprovider.IBMCloudMachineProviderSpec{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "ibmcloudproviderconfig.openshift.io/v1beta1",
 			Kind:       "IBMCloudMachineProviderSpec",
 		},
-		VPC:           vpc,
-		Tags:          []ibmcloudprovider.TagSpecs{},
-		Image:         fmt.Sprintf("%s-rhcos", clusterID),
-		Profile:       mpool.InstanceType,
-		Region:        platform.Region,
-		ResourceGroup: resourceGroup,
-		Zone:          az,
+		VPC:                  vpc,
+		BootVolume:           bootVolume,
+		DedicatedHost:        dedicatedHost,
+		Tags:                 []ibmcloudprovider.TagSpecs{},
+		Image:                fmt.Sprintf("%s-rhcos", clusterID),
+		NetworkResourceGroup: networkResourceGroup,
+		Profile:              mpool.InstanceType,
+		Region:               platform.Region,
+		ResourceGroup:        resourceGroup,
+		Zone:                 az,
 		PrimaryNetworkInterface: ibmcloudprovider.NetworkInterface{
 			Subnet:         subnet,
 			SecurityGroups: securityGroups,
 		},
 		UserDataSecret:    &corev1.LocalObjectReference{Name: userDataSecret},
 		CredentialsSecret: &corev1.LocalObjectReference{Name: "ibmcloud-credentials"},
-		// TODO: IBM: Boot volume encryption key
 	}, nil
+}
+
+func getDedicatedHostNameForZone(clusterID string, role string, zone string) (string, error) {
+	switch role {
+	case "master":
+		return fmt.Sprintf("%s-dhost-control-plane-%s", clusterID, zone), nil
+	case "worker":
+		return fmt.Sprintf("%s-dhost-compute-%s", clusterID, zone), nil
+	default:
+		return "", fmt.Errorf("invalid machine role %v", role)
+	}
+}
+
+func getSubnet(subnets map[string]string, clusterID string, role string, zone string) (string, error) {
+	if len(subnets) == 0 {
+		return getSubnetName(clusterID, role, zone)
+	}
+
+	if subnet, found := subnets[zone]; found {
+		return subnet, nil
+	}
+	return "", fmt.Errorf("no subnet found for %s", zone)
 }
 
 func getSubnetName(clusterID string, role string, zone string) (string, error) {
@@ -135,14 +184,15 @@ func getSecurityGroupNames(clusterID string, role string) ([]string, error) {
 	switch role {
 	case "master":
 		return []string{
-			fmt.Sprintf("%s-security-group-cluster-wide", clusterID),
-			fmt.Sprintf("%s-security-group-openshift-network", clusterID),
-			fmt.Sprintf("%s-security-group-control-plane", clusterID),
+			fmt.Sprintf("%s-sg-cluster-wide", clusterID),
+			fmt.Sprintf("%s-sg-openshift-net", clusterID),
+			fmt.Sprintf("%s-sg-control-plane", clusterID),
+			fmt.Sprintf("%s-sg-cp-internal", clusterID),
 		}, nil
 	case "worker":
 		return []string{
-			fmt.Sprintf("%s-security-group-cluster-wide", clusterID),
-			fmt.Sprintf("%s-security-group-openshift-network", clusterID),
+			fmt.Sprintf("%s-sg-cluster-wide", clusterID),
+			fmt.Sprintf("%s-sg-openshift-net", clusterID),
 		}, nil
 	default:
 		return nil, fmt.Errorf("invalid machine role %v", role)

@@ -1,7 +1,7 @@
 package store
 
 import (
-	"io/ioutil"
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -87,14 +87,10 @@ func TestCreatedAssetsAreNotDirty(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			tempDir, err := ioutil.TempDir("", "TestCreatedAssetsAreNotDirty")
-			if err != nil {
-				t.Fatalf("could not create the temp dir: %v", err)
-			}
-			defer os.RemoveAll(tempDir)
+			tempDir := t.TempDir()
 
 			for name, contents := range tc.files {
-				if err := ioutil.WriteFile(filepath.Join(tempDir, name), []byte(contents), 0666); err != nil {
+				if err := os.WriteFile(filepath.Join(tempDir, name), []byte(contents), 0o666); err != nil { //nolint:gosec // no sensitive data
 					t.Fatalf("could not write the %s file: %v", name, err)
 				}
 			}
@@ -105,7 +101,7 @@ func TestCreatedAssetsAreNotDirty(t *testing.T) {
 			}
 
 			for _, a := range tc.targets {
-				if err := assetStore.Fetch(a, tc.targets...); err != nil {
+				if err := assetStore.Fetch(context.TODO(), a, tc.targets...); err != nil {
 					t.Fatalf("failed to fetch %q: %v", a.Name(), err)
 				}
 
@@ -120,15 +116,17 @@ func TestCreatedAssetsAreNotDirty(t *testing.T) {
 			}
 
 			emptyAssets := map[string]bool{
-				"Master Machines":    true, // no files for the 'none' platform
-				"Worker Machines":    true, // no files for the 'none' platform
-				"Metadata":           true, // read-only
-				"Kubeadmin Password": true, // read-only
+				"Master Machines":               true, // no files for the 'none' platform
+				"Worker Machines":               true, // no files for the 'none' platform
+				"Cluster API Manifests":         true, // no files for the 'none' platform and ClusterAPIInstall feature gate not set
+				"Cluster API Machine Manifests": true, // no files for the 'none' platform and ClusterAPIInstall feature gate not set
+				"Metadata":                      true, // read-only
+				"Kubeadmin Password":            true, // read-only
 			}
 			for _, a := range tc.targets {
 				name := a.Name()
 				newAsset := reflect.New(reflect.TypeOf(a).Elem()).Interface().(asset.WritableAsset)
-				if err := newAssetStore.Fetch(newAsset, tc.targets...); err != nil {
+				if err := newAssetStore.Fetch(context.TODO(), newAsset, tc.targets...); err != nil {
 					t.Fatalf("failed to fetch %q in new store: %v", a.Name(), err)
 				}
 				assetState := newAssetStore.assets[reflect.TypeOf(a)]

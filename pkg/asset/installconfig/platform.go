@@ -1,6 +1,7 @@
 package installconfig
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
@@ -14,22 +15,22 @@ import (
 	baremetalconfig "github.com/openshift/installer/pkg/asset/installconfig/baremetal"
 	gcpconfig "github.com/openshift/installer/pkg/asset/installconfig/gcp"
 	ibmcloudconfig "github.com/openshift/installer/pkg/asset/installconfig/ibmcloud"
-	kubevirtconfig "github.com/openshift/installer/pkg/asset/installconfig/kubevirt"
-	libvirtconfig "github.com/openshift/installer/pkg/asset/installconfig/libvirt"
+	nutanixconfig "github.com/openshift/installer/pkg/asset/installconfig/nutanix"
 	openstackconfig "github.com/openshift/installer/pkg/asset/installconfig/openstack"
-	ovirtconfig "github.com/openshift/installer/pkg/asset/installconfig/ovirt"
+	powervsconfig "github.com/openshift/installer/pkg/asset/installconfig/powervs"
 	vsphereconfig "github.com/openshift/installer/pkg/asset/installconfig/vsphere"
 	"github.com/openshift/installer/pkg/types"
 	"github.com/openshift/installer/pkg/types/aws"
 	"github.com/openshift/installer/pkg/types/azure"
 	"github.com/openshift/installer/pkg/types/baremetal"
+	"github.com/openshift/installer/pkg/types/external"
 	"github.com/openshift/installer/pkg/types/gcp"
 	"github.com/openshift/installer/pkg/types/ibmcloud"
-	"github.com/openshift/installer/pkg/types/kubevirt"
-	"github.com/openshift/installer/pkg/types/libvirt"
 	"github.com/openshift/installer/pkg/types/none"
+	"github.com/openshift/installer/pkg/types/nutanix"
 	"github.com/openshift/installer/pkg/types/openstack"
 	"github.com/openshift/installer/pkg/types/ovirt"
+	"github.com/openshift/installer/pkg/types/powervs"
 	"github.com/openshift/installer/pkg/types/vsphere"
 )
 
@@ -47,7 +48,7 @@ func (a *platform) Dependencies() []asset.Asset {
 }
 
 // Generate queries for input from the user.
-func (a *platform) Generate(asset.Parents) error {
+func (a *platform) Generate(ctx context.Context, _ asset.Parents) error {
 	platform, err := a.queryUserForPlatform()
 	if err != nil {
 		return err
@@ -79,30 +80,29 @@ func (a *platform) Generate(asset.Parents) error {
 		if err != nil {
 			return err
 		}
-	case libvirt.Name:
-		a.Libvirt, err = libvirtconfig.Platform()
-		if err != nil {
-			return err
-		}
+	case external.Name:
+		a.External = &external.Platform{}
 	case none.Name:
 		a.None = &none.Platform{}
 	case openstack.Name:
-		a.OpenStack, err = openstackconfig.Platform()
+		a.OpenStack, err = openstackconfig.Platform(ctx)
 		if err != nil {
 			return err
 		}
 	case ovirt.Name:
-		a.Ovirt, err = ovirtconfig.Platform()
-		if err != nil {
-			return err
-		}
+		return fmt.Errorf("platform oVirt is no longer supported")
 	case vsphere.Name:
 		a.VSphere, err = vsphereconfig.Platform()
 		if err != nil {
 			return err
 		}
-	case kubevirt.Name:
-		a.Kubevirt, err = kubevirtconfig.Platform()
+	case powervs.Name:
+		a.PowerVS, err = powervsconfig.Platform()
+		if err != nil {
+			return err
+		}
+	case nutanix.Name:
+		a.Nutanix, err = nutanixconfig.Platform()
 		if err != nil {
 			return err
 		}

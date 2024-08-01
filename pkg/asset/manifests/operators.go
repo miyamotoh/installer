@@ -3,19 +3,21 @@ package manifests
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"path/filepath"
 	"strings"
 	"text/template"
 
-	"github.com/ghodss/yaml"
 	"github.com/pkg/errors"
+	"sigs.k8s.io/yaml"
 
 	"github.com/openshift/installer/pkg/asset"
 	"github.com/openshift/installer/pkg/asset/installconfig"
 	"github.com/openshift/installer/pkg/asset/templates/content/bootkube"
 	"github.com/openshift/installer/pkg/asset/tls"
 	"github.com/openshift/installer/pkg/types"
+	"github.com/openshift/installer/pkg/types/vsphere"
 )
 
 const (
@@ -61,6 +63,8 @@ func (m *Manifests) Dependencies() []asset.Asset {
 		&Proxy{},
 		&Scheduler{},
 		&ImageContentSourcePolicy{},
+		&ClusterCSIDriverConfig{},
+		&ImageDigestMirrorSet{},
 		&tls.RootCA{},
 		&tls.MCSCertKey{},
 
@@ -69,13 +73,11 @@ func (m *Manifests) Dependencies() []asset.Asset {
 		&bootkube.KubeSystemConfigmapRootCA{},
 		&bootkube.MachineConfigServerTLSSecret{},
 		&bootkube.OpenshiftConfigSecretPullSecret{},
-		&bootkube.OpenshiftMachineConfigOperator{},
-		&bootkube.KubevirtInfraNamespace{},
 	}
 }
 
 // Generate generates the respective operator config.yml files
-func (m *Manifests) Generate(dependencies asset.Parents) error {
+func (m *Manifests) Generate(_ context.Context, dependencies asset.Parents) error {
 	ingress := &Ingress{}
 	dns := &DNS{}
 	network := &Networking{}
@@ -84,7 +86,10 @@ func (m *Manifests) Generate(dependencies asset.Parents) error {
 	proxy := &Proxy{}
 	scheduler := &Scheduler{}
 	imageContentSourcePolicy := &ImageContentSourcePolicy{}
-	dependencies.Get(installConfig, ingress, dns, network, infra, proxy, scheduler, imageContentSourcePolicy)
+	clusterCSIDriverConfig := &ClusterCSIDriverConfig{}
+	imageDigestMirrorSet := &ImageDigestMirrorSet{}
+
+	dependencies.Get(installConfig, ingress, dns, network, infra, proxy, scheduler, imageContentSourcePolicy, imageDigestMirrorSet, clusterCSIDriverConfig)
 
 	redactedConfig, err := redactedInstallConfig(*installConfig.Config)
 	if err != nil {
@@ -94,6 +99,11 @@ func (m *Manifests) Generate(dependencies asset.Parents) error {
 	m.KubeSysConfig = configMap("kube-system", "cluster-config-v1", genericData{
 		"install-config": string(redactedConfig),
 	})
+	if m.KubeSysConfig.Metadata.Annotations == nil {
+		m.KubeSysConfig.Metadata.Annotations = make(map[string]string, 1)
+	}
+	m.KubeSysConfig.Metadata.Annotations["kubernetes.io/description"] = "The install-config content used to create the cluster.  The cluster configuration may have evolved since installation, so check cluster configuration resources directly if you are interested in the current cluster state."
+
 	kubeSysConfigData, err := yaml.Marshal(m.KubeSysConfig)
 	if err != nil {
 		return errors.Wrap(err, "failed to create kube-system/cluster-config-v1 configmap")
@@ -114,6 +124,8 @@ func (m *Manifests) Generate(dependencies asset.Parents) error {
 	m.FileList = append(m.FileList, proxy.Files()...)
 	m.FileList = append(m.FileList, scheduler.Files()...)
 	m.FileList = append(m.FileList, imageContentSourcePolicy.Files()...)
+	m.FileList = append(m.FileList, clusterCSIDriverConfig.Files()...)
+	m.FileList = append(m.FileList, imageDigestMirrorSet.Files()...)
 
 	asset.SortFiles(m.FileList)
 
@@ -138,11 +150,14 @@ func (m *Manifests) generateBootKubeManifests(dependencies asset.Parents) []*ass
 	)
 
 	templateData := &bootkubeTemplateData{
+		CVOCapabilities:  installConfig.Config.Capabilities,
 		CVOClusterID:     clusterID.UUID,
 		McsTLSCert:       base64.StdEncoding.EncodeToString(mcsCertKey.Cert()),
 		McsTLSKey:        base64.StdEncoding.EncodeToString(mcsCertKey.Key()),
 		PullSecretBase64: base64.StdEncoding.EncodeToString([]byte(installConfig.Config.PullSecret)),
 		RootCaCert:       string(rootCA.Cert()),
+		IsFCOS:           installConfig.Config.IsFCOS(),
+		IsSCOS:           installConfig.Config.IsSCOS(),
 		IsOKD:            installConfig.Config.IsOKD(),
 	}
 
@@ -153,8 +168,6 @@ func (m *Manifests) generateBootKubeManifests(dependencies asset.Parents) []*ass
 		&bootkube.KubeSystemConfigmapRootCA{},
 		&bootkube.MachineConfigServerTLSSecret{},
 		&bootkube.OpenshiftConfigSecretPullSecret{},
-		&bootkube.OpenshiftMachineConfigOperator{},
-		&bootkube.KubevirtInfraNamespace{},
 	} {
 		dependencies.Get(a)
 		for _, f := range a.Files() {
@@ -221,14 +234,40 @@ func (m *Manifests) Load(f asset.FileFetcher) (bool, error) {
 }
 
 func redactedInstallConfig(config types.InstallConfig) ([]byte, error) {
-	config.PullSecret = ""
-	if config.Platform.VSphere != nil {
-		p := *config.Platform.VSphere
-		p.Username = ""
-		p.Password = ""
-		config.Platform.VSphere = &p
+	newConfig := config
+
+	newConfig.PullSecret = ""
+	if newConfig.Platform.VSphere != nil {
+		p := config.VSphere
+		newVCenters := make([]vsphere.VCenter, len(p.VCenters))
+		for i, v := range p.VCenters {
+			newVCenters[i].Server = v.Server
+			newVCenters[i].Datacenters = v.Datacenters
+		}
+		newVSpherePlatform := vsphere.Platform{
+			DeprecatedVCenter:          p.DeprecatedVCenter,
+			DeprecatedUsername:         "",
+			DeprecatedPassword:         "",
+			DeprecatedDatacenter:       p.DeprecatedDatacenter,
+			DeprecatedDefaultDatastore: p.DeprecatedDefaultDatastore,
+			DeprecatedFolder:           p.DeprecatedFolder,
+			DeprecatedCluster:          p.DeprecatedCluster,
+			DeprecatedResourcePool:     p.DeprecatedResourcePool,
+			ClusterOSImage:             p.ClusterOSImage,
+			DeprecatedAPIVIP:           p.DeprecatedAPIVIP,
+			APIVIPs:                    p.APIVIPs,
+			DeprecatedIngressVIP:       p.DeprecatedIngressVIP,
+			IngressVIPs:                p.IngressVIPs,
+			DefaultMachinePlatform:     p.DefaultMachinePlatform,
+			DeprecatedNetwork:          p.DeprecatedNetwork,
+			DiskType:                   p.DiskType,
+			VCenters:                   newVCenters,
+			FailureDomains:             p.FailureDomains,
+		}
+		newConfig.Platform.VSphere = &newVSpherePlatform
 	}
-	return yaml.Marshal(config)
+
+	return yaml.Marshal(newConfig)
 }
 
 func indent(indention int, v string) string {

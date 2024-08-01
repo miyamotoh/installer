@@ -1,20 +1,22 @@
 package manifests
 
 import (
+	"context"
 	"path/filepath"
 
-	"github.com/ghodss/yaml"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/yaml"
 
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/installer/pkg/asset"
 	"github.com/openshift/installer/pkg/asset/installconfig"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var (
-	schedulerCfgFilename = filepath.Join(manifestDir, "cluster-scheduler-02-config.yml")
+	// SchedulerCfgFilename is the path of the Scheduler Config file
+	SchedulerCfgFilename = filepath.Join(manifestDir, "cluster-scheduler-02-config.yml")
 )
 
 // Scheduler generates the cluster-scheduler-*.yml files.
@@ -38,7 +40,7 @@ func (*Scheduler) Dependencies() []asset.Asset {
 }
 
 // Generate generates the scheduler config and its CRD.
-func (s *Scheduler) Generate(dependencies asset.Parents) error {
+func (s *Scheduler) Generate(_ context.Context, dependencies asset.Parents) error {
 	config := &configv1.Scheduler{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: configv1.SchemeGroupVersion.String(),
@@ -80,7 +82,7 @@ func (s *Scheduler) Generate(dependencies asset.Parents) error {
 
 	s.FileList = []*asset.File{
 		{
-			Filename: schedulerCfgFilename,
+			Filename: SchedulerCfgFilename,
 			Data:     configData,
 		},
 	}

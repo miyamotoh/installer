@@ -1,6 +1,8 @@
 package tls
 
 import (
+	"context"
+
 	"github.com/openshift/installer/pkg/asset"
 	"github.com/openshift/installer/pkg/asset/installconfig"
 	awstypes "github.com/openshift/installer/pkg/types/aws"
@@ -23,7 +25,7 @@ func (a *CloudProviderCABundle) Dependencies() []asset.Asset {
 }
 
 // Generate generates the CA bundle based on its dependencies.
-func (a *CloudProviderCABundle) Generate(deps asset.Parents) error {
+func (a *CloudProviderCABundle) Generate(_ context.Context, deps asset.Parents) error {
 	ic := &installconfig.InstallConfig{}
 	deps.Get(ic)
 
@@ -33,7 +35,7 @@ func (a *CloudProviderCABundle) Generate(deps asset.Parents) error {
 	if ic.Config.Platform.Name() != awstypes.Name {
 		return nil
 	}
-	if !awstypes.C2SRegions.Has(ic.Config.Platform.AWS.Region) {
+	if !awstypes.IsSecretRegion(ic.Config.Platform.AWS.Region) {
 		return nil
 	}
 

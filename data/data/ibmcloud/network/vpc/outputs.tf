@@ -7,15 +7,20 @@ output "control_plane_security_group_id_list" {
     ibm_is_security_group.cluster_wide.id,
     ibm_is_security_group.openshift_network.id,
     ibm_is_security_group.control_plane.id,
+    ibm_is_security_group.control_plane_internal.id,
   ]
 }
 
 output "control_plane_subnet_id_list" {
-  value = ibm_is_subnet.control_plane.*.id
+  value = local.control_plane_subnets[*].id
 }
 
 output "control_plane_subnet_zone_list" {
-  value = ibm_is_subnet.control_plane.*.zone
+  value = local.control_plane_subnets[*].zone
+}
+
+output "compute_subnet_id_list" {
+  value = local.compute_subnets[*].id
 }
 
 output "lb_kubernetes_api_public_hostname" {
@@ -56,5 +61,9 @@ output "lb_pool_machine_config_id" {
 }
 
 output "vpc_id" {
-  value = ibm_is_vpc.vpc.id
+  value = local.vpc_id
+}
+
+output "vpc_crn" {
+  value = local.vpc_crn
 }

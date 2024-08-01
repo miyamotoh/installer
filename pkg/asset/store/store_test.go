@@ -1,7 +1,7 @@
 package store
 
 import (
-	"io/ioutil"
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -54,7 +54,7 @@ func (a *testStoreAssetA) Dependencies() []asset.Asset {
 	return dependenciesTestStoreAsset(a)
 }
 
-func (a *testStoreAssetA) Generate(asset.Parents) error {
+func (a *testStoreAssetA) Generate(context.Context, asset.Parents) error {
 	return generateTestStoreAsset(a)
 }
 
@@ -76,7 +76,7 @@ func (a *testStoreAssetB) Dependencies() []asset.Asset {
 	return dependenciesTestStoreAsset(a)
 }
 
-func (a *testStoreAssetB) Generate(asset.Parents) error {
+func (a *testStoreAssetB) Generate(context.Context, asset.Parents) error {
 	return generateTestStoreAsset(a)
 }
 
@@ -98,7 +98,7 @@ func (a *testStoreAssetC) Dependencies() []asset.Asset {
 	return dependenciesTestStoreAsset(a)
 }
 
-func (a *testStoreAssetC) Generate(asset.Parents) error {
+func (a *testStoreAssetC) Generate(context.Context, asset.Parents) error {
 	return generateTestStoreAsset(a)
 }
 
@@ -120,7 +120,7 @@ func (a *testStoreAssetD) Dependencies() []asset.Asset {
 	return dependenciesTestStoreAsset(a)
 }
 
-func (a *testStoreAssetD) Generate(asset.Parents) error {
+func (a *testStoreAssetD) Generate(context.Context, asset.Parents) error {
 	return generateTestStoreAsset(a)
 }
 
@@ -260,13 +260,8 @@ func TestStoreFetch(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			clearAssetBehaviors()
-			dir, err := ioutil.TempDir("", "TestStoreFetch")
-			if err != nil {
-				t.Fatalf("failed to create temporary directory: %v", err)
-			}
-			defer os.RemoveAll(dir)
 			store := &storeImpl{
-				directory: dir,
+				directory: t.TempDir(),
 				assets:    map[reflect.Type]*assetState{},
 			}
 			assets := make(map[string]asset.Asset, len(tc.assets))
@@ -287,7 +282,7 @@ func TestStoreFetch(t *testing.T) {
 					source: generatedSource,
 				}
 			}
-			err = store.Fetch(assets[tc.target])
+			err := store.Fetch(context.Background(), assets[tc.target])
 			assert.NoError(t, err, "error fetching asset")
 			assert.EqualValues(t, tc.expectedGenerationLog, generationLog)
 		})
@@ -381,7 +376,7 @@ func TestStoreFetchOnDiskAssets(t *testing.T) {
 			for _, name := range tc.onDiskAssets {
 				onDiskAssets[reflect.TypeOf(assets[name])] = true
 			}
-			err := store.fetch(assets[tc.target], "")
+			err := store.fetch(context.Background(), assets[tc.target], "")
 			assert.NoError(t, err, "unexpected error")
 			assert.EqualValues(t, tc.expectedGenerationLog, generationLog)
 			assert.Equal(t, tc.expectedDirty, store.assets[reflect.TypeOf(assets[tc.target])].anyParentsDirty)
@@ -392,11 +387,7 @@ func TestStoreFetchOnDiskAssets(t *testing.T) {
 func TestStoreFetchIdempotency(t *testing.T) {
 	clearAssetBehaviors()
 
-	tempDir, err := ioutil.TempDir("", "TestStoreFetchIdempotency")
-	if err != nil {
-		t.Fatalf("could not create the temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	for i := 0; i < 2; i++ {
 		store, err := newStore(tempDir)
@@ -405,7 +396,7 @@ func TestStoreFetchIdempotency(t *testing.T) {
 		}
 		assets := []asset.WritableAsset{&testStoreAssetA{}, &testStoreAssetB{}}
 		for _, a := range assets {
-			err = store.Fetch(a, assets...)
+			err = store.Fetch(context.Background(), a, assets...)
 			if !assert.NoError(t, err, "(loop %d) unexpected error fetching asset %q", a.Name()) {
 				t.Fatal()
 			}

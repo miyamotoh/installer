@@ -17,15 +17,22 @@ var (
 		types.ArchitectureARM64: true,
 	}
 
-	// ValidArchitectureValues lists the supported arches for AWS
-	ValidArchitectureValues = func() []string {
+	// validArchitectureValues lists the supported arches for AWS
+	validArchitectureValues = func() []string {
 		v := make([]string, 0, len(validArchitectures))
 		for m := range validArchitectures {
 			v = append(v, string(m))
 		}
 		return v
 	}()
+
+	validMetadataAuthValues = sets.NewString("Required", "Optional")
 )
+
+// AWS has a limit of 16 security groups. See:
+// https://docs.aws.amazon.com/vpc/latest/userguide/amazon-vpc-limits.html
+// We set a user limit of 10 and reserve 6 for use by OpenShift.
+const maxUserSecurityGroupsCount = 10
 
 // ValidateMachinePool checks that the specified machine pool is valid.
 func ValidateMachinePool(platform *aws.Platform, p *aws.MachinePool, fldPath *field.Path) field.ErrorList {
@@ -36,12 +43,68 @@ func ValidateMachinePool(platform *aws.Platform, p *aws.MachinePool, fldPath *fi
 		}
 	}
 
-	if p.IOPS < 0 {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("iops"), p.IOPS, "Storage IOPS must be positive"))
+	if p.EC2RootVolume.Type != "" {
+		allErrs = append(allErrs, validateVolumeSize(p, fldPath)...)
+		allErrs = append(allErrs, validateIOPS(p, fldPath)...)
 	}
-	if p.Size < 0 {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("size"), p.Size, "Storage size must be positive"))
+
+	if p.EC2Metadata.Authentication != "" && !validMetadataAuthValues.Has(p.EC2Metadata.Authentication) {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("authentication"), p.EC2Metadata.Authentication, "must be either Required or Optional"))
 	}
+
+	allErrs = append(allErrs, validateSecurityGroups(platform, p, fldPath)...)
+
+	return allErrs
+}
+
+func validateSecurityGroups(platform *aws.Platform, p *aws.MachinePool, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	if len(p.AdditionalSecurityGroupIDs) > 0 && len(platform.Subnets) == 0 {
+		allErrs = append(allErrs, field.Required(fldPath.Child("platform.subnets"), "subnets must be provided when additional security groups are present"))
+	}
+
+	// The installer also creates a security group: `${var.cluster_id}-master-sg/${var.cluster_id}-worker-sg`
+	if count := len(p.AdditionalSecurityGroupIDs); count > maxUserSecurityGroupsCount {
+		allErrs = append(allErrs, field.TooMany(fldPath, count, maxUserSecurityGroupsCount))
+	}
+
+	return allErrs
+}
+
+func validateVolumeSize(p *aws.MachinePool, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	volumeSize := p.EC2RootVolume.Size
+
+	if volumeSize <= 0 {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("size"), volumeSize, "volume size value must be a positive number"))
+	}
+
+	return allErrs
+}
+
+func validateIOPS(p *aws.MachinePool, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	volumeType := strings.ToLower(p.EC2RootVolume.Type)
+	iops := p.EC2RootVolume.IOPS
+
+	switch volumeType {
+	case "io1", "io2":
+		if iops <= 0 {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("iops"), iops, "iops must be a positive number"))
+		}
+	case "gp3":
+		if iops < 0 {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("iops"), iops, "iops must be a positive number"))
+		}
+	case "gp2", "st1", "sc1", "standard":
+		if iops != 0 {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("iops"), iops, fmt.Sprintf("iops not supported for type %s", volumeType)))
+		}
+	default:
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("type"), volumeType, fmt.Sprintf("failed to find volume type %s", volumeType)))
+	}
+
 	return allErrs
 }
 
@@ -54,7 +117,7 @@ func ValidateAMIID(platform *aws.Platform, p *aws.MachinePool, fldPath *field.Pa
 
 	// regions is a list of regions for which the user should set AMI ID as copying the AMI to these regions
 	// is known to not be supported.
-	regions := sets.NewString("us-gov-west-1", "us-gov-east-1", "us-iso-east-1", "cn-north-1", "cn-northwest-1")
+	regions := sets.NewString("us-iso-east-1", "us-isob-east-1", "us-iso-west-1", "cn-north-1", "cn-northwest-1")
 	if pool.AMIID == "" && regions.Has(platform.Region) {
 		allErrs = append(allErrs, field.Required(fldPath, fmt.Sprintf("AMI ID must be provided for regions %s", strings.Join(regions.List(), ", "))))
 	}
@@ -66,7 +129,7 @@ func ValidateMachinePoolArchitecture(pool *types.MachinePool, fldPath *field.Pat
 	allErrs := field.ErrorList{}
 
 	if !validArchitectures[pool.Architecture] {
-		allErrs = append(allErrs, field.NotSupported(fldPath, pool.Architecture, ValidArchitectureValues))
+		allErrs = append(allErrs, field.NotSupported(fldPath, pool.Architecture, validArchitectureValues))
 	}
 	return allErrs
 }

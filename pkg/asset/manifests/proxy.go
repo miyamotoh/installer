@@ -1,19 +1,21 @@
 package manifests
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"path/filepath"
 	"strings"
 
-	"github.com/ghodss/yaml"
-	configv1 "github.com/openshift/api/config/v1"
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"sigs.k8s.io/yaml"
 
+	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/installer/pkg/asset"
 	"github.com/openshift/installer/pkg/asset/installconfig"
+	"github.com/openshift/installer/pkg/types"
 	"github.com/openshift/installer/pkg/types/aws"
 	"github.com/openshift/installer/pkg/types/azure"
 	"github.com/openshift/installer/pkg/types/gcp"
@@ -45,7 +47,7 @@ func (*Proxy) Dependencies() []asset.Asset {
 }
 
 // Generate generates the Proxy config and its CRD.
-func (p *Proxy) Generate(dependencies asset.Parents) error {
+func (p *Proxy) Generate(_ context.Context, dependencies asset.Parents) error {
 	installConfig := &installconfig.InstallConfig{}
 	network := &Networking{}
 	dependencies.Get(installConfig, network)
@@ -67,7 +69,10 @@ func (p *Proxy) Generate(dependencies asset.Parents) error {
 			HTTPSProxy: installConfig.Config.Proxy.HTTPSProxy,
 			NoProxy:    installConfig.Config.Proxy.NoProxy,
 		}
+	}
 
+	if installConfig.Config.AdditionalTrustBundlePolicy == types.PolicyAlways ||
+		installConfig.Config.Proxy != nil {
 		if installConfig.Config.AdditionalTrustBundle != "" {
 			p.Config.Spec.TrustedCA = configv1.ConfigMapNameReference{
 				Name: additionalTrustBundleConfigMapName,
@@ -150,6 +155,14 @@ func createNoProxy(installConfig *installconfig.InstallConfig, network *Networki
 	}
 
 	// TODO: IBM[#95]: proxy
+
+	if platform == azure.Name && installConfig.Azure.CloudName != azure.PublicCloud {
+		// https://learn.microsoft.com/en-us/azure/virtual-network/what-is-ip-address-168-63-129-16
+		set.Insert("168.63.129.16")
+		if installConfig.Azure.CloudName == azure.StackCloud {
+			set.Insert(installConfig.Config.Azure.ARMEndpoint)
+		}
+	}
 
 	// From https://cloud.google.com/vpc/docs/special-configurations add GCP metadata.
 	// "metadata.google.internal." added due to https://bugzilla.redhat.com/show_bug.cgi?id=1754049

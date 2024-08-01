@@ -1,8 +1,8 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -73,8 +73,8 @@ func newStore(dir string) (*storeImpl, error) {
 // Fetch retrieves the state of the given asset, generating it and its
 // dependencies if necessary. When purging consumed assets, none of the
 // assets in preserved will be purged.
-func (s *storeImpl) Fetch(a asset.Asset, preserved ...asset.WritableAsset) error {
-	if err := s.fetch(a, ""); err != nil {
+func (s *storeImpl) Fetch(ctx context.Context, a asset.Asset, preserved ...asset.WritableAsset) error {
+	if err := s.fetch(ctx, a, ""); err != nil {
 		return err
 	}
 	if err := s.saveStateFile(); err != nil {
@@ -130,7 +130,7 @@ func (s *storeImpl) DestroyState() error {
 func (s *storeImpl) loadStateFile() error {
 	path := filepath.Join(s.directory, stateFileName)
 	assets := map[string]json.RawMessage{}
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -184,7 +184,7 @@ func (s *storeImpl) saveStateFile() error {
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return err
 	}
-	if err := ioutil.WriteFile(path, data, 0640); err != nil {
+	if err := os.WriteFile(path, data, 0o640); err != nil { //nolint:gosec // no sensitive info
 		return err
 	}
 	return nil
@@ -193,7 +193,7 @@ func (s *storeImpl) saveStateFile() error {
 // fetch populates the given asset, generating it and its dependencies if
 // necessary, and returns whether or not the asset had to be regenerated and
 // any errors.
-func (s *storeImpl) fetch(a asset.Asset, indent string) error {
+func (s *storeImpl) fetch(ctx context.Context, a asset.Asset, indent string) error {
 	logrus.Debugf("%sFetching %s...", indent, a.Name())
 
 	assetState, ok := s.assets[reflect.TypeOf(a)]
@@ -218,13 +218,13 @@ func (s *storeImpl) fetch(a asset.Asset, indent string) error {
 	dependencies := a.Dependencies()
 	parents := make(asset.Parents, len(dependencies))
 	for _, d := range dependencies {
-		if err := s.fetch(d, increaseIndent(indent)); err != nil {
+		if err := s.fetch(ctx, d, increaseIndent(indent)); err != nil {
 			return errors.Wrapf(err, "failed to fetch dependency of %q", a.Name())
 		}
 		parents.Add(d)
 	}
 	logrus.Debugf("%sGenerating %s...", indent, a.Name())
-	if err := a.Generate(parents); err != nil {
+	if err := a.Generate(ctx, parents); err != nil {
 		return errors.Wrapf(err, "failed to generate asset %q", a.Name())
 	}
 	assetState.asset = a
