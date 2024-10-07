@@ -152,7 +152,11 @@ func (a *InstallConfig) finish(ctx context.Context, filename string) error {
 		a.IBMCloud = icibmcloud.NewMetadata(a.Config)
 	}
 	if a.Config.PowerVS != nil {
-		a.PowerVS = icpowervs.NewMetadata(a.Config)
+		metadata, err := icpowervs.NewMetadata(a.Config)
+		if err != nil {
+			return err
+		}
+		a.PowerVS = metadata
 	}
 	if a.Config.VSphere != nil {
 		a.VSphere = icvsphere.NewMetadata()

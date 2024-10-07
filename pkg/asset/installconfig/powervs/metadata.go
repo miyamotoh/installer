@@ -41,8 +41,12 @@ type Metadata struct {
 }
 
 // NewMetadata initializes a new Metadata object.
-func NewMetadata(config *types.InstallConfig) *Metadata {
-	return &Metadata{BaseDomain: config.BaseDomain, PublishStrategy: config.Publish}
+func NewMetadata(config *types.InstallConfig) (*Metadata, error) {
+	client, err := NewClient()
+	if err != nil {
+		return nil, err
+	}
+	return &Metadata{BaseDomain: config.BaseDomain, PublishStrategy: config.Publish, client: client}, nil
 }
 
 // AccountID returns the IBM Cloud account ID associated with the authentication
@@ -50,15 +54,6 @@ func NewMetadata(config *types.InstallConfig) *Metadata {
 func (m *Metadata) AccountID(ctx context.Context) (string, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-
-	if m.client == nil {
-		client, err := NewClient()
-		if err != nil {
-			return "", err
-		}
-
-		m.client = client
-	}
 
 	if m.accountID == "" {
 		if m.client.BXCli.User == nil || m.client.BXCli.User.Account == "" {
@@ -81,7 +76,6 @@ func (m *Metadata) APIKey(ctx context.Context) (string, error) {
 		if err != nil {
 			return "", err
 		}
-
 		m.client = client
 	}
 
@@ -99,15 +93,6 @@ func (m *Metadata) CISInstanceCRN(ctx context.Context) (string, error) {
 	defer m.mutex.Unlock()
 
 	var err error
-	if m.client == nil {
-		client, err := NewClient()
-		if err != nil {
-			return "", err
-		}
-
-		m.client = client
-	}
-
 	if m.PublishStrategy == types.ExternalPublishingStrategy && m.cisInstanceCRN == "" {
 		m.cisInstanceCRN, err = m.client.GetInstanceCRNByName(ctx, m.BaseDomain, types.ExternalPublishingStrategy)
 		if err != nil {
@@ -129,15 +114,6 @@ func (m *Metadata) DNSInstanceCRN(ctx context.Context) (string, error) {
 	defer m.mutex.Unlock()
 
 	var err error
-	if m.client == nil {
-		client, err := NewClient()
-		if err != nil {
-			return "", err
-		}
-
-		m.client = client
-	}
-
 	if m.PublishStrategy == types.InternalPublishingStrategy && m.dnsInstanceCRN == "" {
 		m.dnsInstanceCRN, err = m.client.GetInstanceCRNByName(ctx, m.BaseDomain, types.InternalPublishingStrategy)
 		if err != nil {
@@ -203,15 +179,6 @@ func (m *Metadata) IsVPCPermittedNetwork(ctx context.Context, vpcName string, ba
 		if err != nil {
 			return false, fmt.Errorf("cannot collect DNS permitted networks without DNS Instance: %w", err)
 		}
-	}
-
-	if m.client == nil {
-		client, err := NewClient()
-		if err != nil {
-			return false, err
-		}
-
-		m.client = client
 	}
 
 	// Get CIS zone ID by name
